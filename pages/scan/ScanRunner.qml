@@ -70,6 +70,15 @@ QtObject {
     }
 
     function cancel() {
-        capTask.cancel()
+        // stop flash, if your connector supports it
+        if (connector && connector.cancelConfigureCameraSensors) {
+            try { connector.cancelConfigureCameraSensors() } catch(e) {}
+        }
+        // stop trigger if capture running
+        if (connector && connector.stopTrigger) {
+            try { connector.stopTrigger() } catch(e) {}
+        }
+        // tell the UI we're done (not ok)
+        scanFinished(false, "Canceled", "", "")
     }
 }

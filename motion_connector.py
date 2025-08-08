@@ -51,8 +51,8 @@ class MOTIONConnector(QObject):
     configLog = pyqtSignal(str)
     configFinished = pyqtSignal(bool, str)
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config_dir="config", parent=None):
+        super().__init__(parent)
         self._interface = motion_interface
 
         # Check if console and sensor are connected
@@ -67,6 +67,7 @@ class MOTIONConnector(QObject):
         self._running = False
         self._trigger_state = "OFF"
         self._state = DISCONNECTED
+        self.laser_params = self._load_laser_params(config_dir)
 
         self.connect_signals()
 
@@ -95,6 +96,46 @@ class MOTIONConnector(QObject):
         if changed:
             self.connectionStatusChanged.emit()
         self.update_state()
+
+    def _load_laser_params(self, config_dir):
+        config_path = os.path.join(config_dir, "laser_params.json")
+        try:
+            with open(config_path, "r") as f:
+                params = json.load(f)
+            logger.info(f"[Connector] Loaded {len(params)} laser parameter sets from {config_path}")
+            return params
+        except FileNotFoundError:
+            logger.error(f"[Connector] Laser parameter file not found: {config_path}")
+            return []
+        except json.JSONDecodeError as e:
+            logger.error(f"[Connector] Invalid JSON in {config_path}: {e}")
+            return []
+
+    def set_laser_power_from_config(self, interface):
+        logger.info("[Connector] Setting laser power from config...")
+        for idx, laser_param in enumerate(self.laser_params, start=1):
+            muxIdx = laser_param["muxIdx"]
+            channel = laser_param["channel"]
+            i2cAddr = laser_param["i2cAddr"]
+            offset = laser_param["offset"]
+            dataToSend = bytearray(laser_param["dataToSend"])
+
+            logger.debug(
+                f"[Connector] ({idx}/{len(self.laser_params)}) "
+                f"Writing I2C: muxIdx={muxIdx}, channel={channel}, "
+                f"i2cAddr=0x{i2cAddr:02X}, offset=0x{offset:02X}, "
+                f"data={list(dataToSend)}"
+            )
+
+            if not interface.console_module.write_i2c_packet(
+                mux_index=muxIdx, channel=channel,
+                device_addr=i2cAddr, reg_addr=offset,
+                data=dataToSend
+            ):
+                logger.error(f"Failed to set laser power (muxIdx={muxIdx}, channel={channel})")
+                return False
+        logger.info("Laser power set successfully.")
+        return True
         
     def connect_signals(self):
         """Connect LIFUInterface signals to QML."""
@@ -236,6 +277,15 @@ class MOTIONConnector(QObject):
         logger.info(f"Data received from {descriptor}: {message}")
         self.signalDataReceived.emit(descriptor, message)
 
+    @pyqtSlot(result=bool)
+    def setLaserPowerFromConfig(self) -> bool:
+        """Apply laser power parameters loaded at startup."""
+        try:
+            return self.set_laser_power_from_config(self._interface)
+        except Exception as e:
+            logger.error(f"setLaserPowerFromConfig error: {e}")
+            return False
+        
     @pyqtSlot(str)
     def querySensorInfo(self, target: str):
         """Fetch and emit device information."""

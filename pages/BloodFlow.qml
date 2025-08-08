@@ -614,12 +614,13 @@ Rectangle {
         laserOn: true
         laserPower: 50
         triggerConfig: (typeof appTriggerConfig !== "undefined") ? appTriggerConfig : ({
-            "frequencyHz": 200,
-            "pulseCount": 10,
-            "pulseWidthUsec": 2000,
-            "trainIntervalMs": 1000,
-            "trainCount": 1,
-            "mode": "single"
+            "TriggerFrequencyHz": 40,
+            "TriggerPulseWidthUsec": 500,
+            "LaserPulseDelayUsec": 100,
+            "LaserPulseWidthUsec": 500,
+            "LaserPulseSkipInterval": 600,
+            "EnableSyncOut": True,
+            "EnableTaTrigger": True
         })
 
 
@@ -633,8 +634,8 @@ Rectangle {
         }
         onMessageOut: function(line) { scanDialog.appendLog(line) }
         onScanFinished: function(ok, err, left, right) {
-            if (!ok) scanDialog.appendLog("ERROR: " + err);
-            scanDialog.close();
+            if (!ok) scanDialog.appendLog("ERROR: " + err)
+            scanDialog.close()   // <— closes even on error or cancel
         }
     }
 }
