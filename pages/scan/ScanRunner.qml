@@ -34,6 +34,7 @@ QtObject {
         _stage = "idle"
     }
 
+    // --- Flash ---
     property FlashSensorsTask flashTask: FlashSensorsTask {
         connector: runner.connector
         cameraMask: runner.cameraMask
@@ -61,6 +62,7 @@ QtObject {
         }
     }
 
+    // --- Set trigger/laser ---
     property SetTriggerLaserTask setTask: SetTriggerLaserTask {
         connector: runner.connector
         laserOn: runner.laserOn
@@ -89,6 +91,7 @@ QtObject {
         }
     }
 
+    // --- Capture ---
     property CaptureDataTask capTask: CaptureDataTask {
         connector: runner.connector
         cameraMask: runner.cameraMask
@@ -103,10 +106,43 @@ QtObject {
         onProgress: function(pct) { progressUpdate(pct) }
         onLog: function(line) { messageOut(line) }
         onFinished: function(ok, err) {
-            runner._finish(ok, err, ok ? leftPath : "", ok ? rightPath : "")
+            if (!ok) { runner._finish(false, err, "", ""); return }
+            // Capture OK → Post-process
+            runner._stage = "post"
+            stageUpdate("Post-processing…")
+            postTask.leftPath  = leftPath
+            postTask.rightPath = rightPath
+            postTask.run()
         }
     }
 
+    // --- Post-process (raw → csv) ---
+    property PostProcessTask postTask: PostProcessTask {
+        connector: runner.connector
+        property var _wd: null
+        onStarted: {
+            // generous watchdog (depends on file size); adjust as needed
+            if (_wd) try { _wd.stop() } catch(e) {}
+            _wd = Qt.createQmlObject('import QtQuick 6.5; Timer { interval: 180000; repeat: false }', postTask, "postWD")
+            _wd.triggered.connect(function() {
+                messageOut("Post-processing timed out.")
+                runner._finish(false, "Post-processing timed out", "", "")
+            })
+            _wd.start()
+        }
+        onProgress: function(pct) { progressUpdate(Math.max(95, Math.min(99, pct))) }
+        onLog: function(line) { messageOut(line) }
+        onFinished: function(ok, err, leftCsv, rightCsv) {
+            if (_wd) { try { _wd.stop() } catch(e) {} _wd = null }
+            if (!ok) { runner._finish(false, err, "", ""); return }
+            // All done
+            progressUpdate(100)
+            stageUpdate("Scan complete")
+            runner._finish(true, "", leftCsv, rightCsv)
+        }
+    }
+
+    // controls
     function start() {
         if (runner._stage !== "idle") {
             messageOut("Scan already running, ignoring start()")
@@ -120,13 +156,21 @@ QtObject {
     }
 
     function cancel() {
-        // stop flash (async worker) if running
-        if (runner._stage === "flash" && connector && connector.cancelConfigureCameraSensors) {
-            try { connector.cancelConfigureCameraSensors() } catch(e) {}
-        }
-        // stop capture trigger if running
-        if (connector && connector.stopTrigger) {
-            try { connector.stopTrigger() } catch(e) {}
+        switch (runner._stage) {
+        case "flash":
+            if (connector && connector.cancelConfigureCameraSensors)
+                try { connector.cancelConfigureCameraSensors() } catch(e) {}
+            break
+        case "capture":
+            if (connector && connector.stopCapture)
+                try { connector.stopCapture() } catch(e) {}
+            else if (connector && connector.stopTrigger)
+                try { connector.stopTrigger() } catch(e) {}
+            break
+        case "post":
+            if (connector && connector.cancelPostProcess)
+                try { connector.cancelPostProcess() } catch(e) {}
+            break
         }
         runner._finish(false, "Canceled", "", "")
     }

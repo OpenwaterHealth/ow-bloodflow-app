@@ -253,14 +253,13 @@ Rectangle {
                             id: leftSensorSelector
                             Layout.preferredWidth: 200
                             Layout.preferredHeight: 40
-                            model: ["Default","Middle"]
+                            model: ["Default", "Middle"] // ["Default"] // "Middle"
 
                             onCurrentIndexChanged: {
                                 switch (currentIndex) {
                                     case 0: leftSensorView.sensorActive = [false,false,true,true,false,false,true,true]; break;  // 0x5A
                                     case 1: leftSensorView.sensorActive = [false,false,true,true,true,true,false,false]; break;  // 0x66
                                 }
-                                console.log("Left mask -> 0x" + leftMask.toString(16).toUpperCase());
                             }
                         }
                     }
@@ -279,14 +278,13 @@ Rectangle {
                             id: rightSensorSelector
                             Layout.preferredWidth: 200
                             Layout.preferredHeight: 40
-                            model: ["Default","Middle"]
+                            model: ["Default", "Middle"] 
 
                             onCurrentIndexChanged: {
                                 switch (currentIndex) {
                                     case 0: rightSensorView.sensorActive = [false,false,true,true,false,false,true,true]; break;  // 0x5A
                                     case 1: rightSensorView.sensorActive = [false,false,true,true,true,true,false,false]; break;  // 0x66
                                 }                                
-                                console.log("Right mask -> 0x" + rightMask.toString(16).toUpperCase());
                             }
                         }
                     }
@@ -295,8 +293,6 @@ Rectangle {
                         // Force default selection handlers to run so sensorActive arrays are set
                         leftSensorSelector.currentIndex = 0;
                         rightSensorSelector.currentIndex = 0;
-                        console.log("Left mask=0x" + leftMask.toString(16).toUpperCase(),
-                                    "Right mask=0x" + rightMask.toString(16).toUpperCase());
                     }
                 }
             }

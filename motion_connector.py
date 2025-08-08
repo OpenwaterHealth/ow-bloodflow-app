@@ -15,6 +15,7 @@ import re
 import string
 
 from motion_singleton import motion_interface  
+from processing.data_processing import DataProcessor 
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)  # or INFO depending on what you want to see
@@ -61,6 +62,11 @@ class MOTIONConnector(QObject):
     captureFinished = pyqtSignal(bool, str, str, str)       # ok, error, leftPath, rightPath
     scanNotesChanged = pyqtSignal()
 
+    # post-processing signals
+    postProgress = pyqtSignal(int)
+    postLog = pyqtSignal(str)
+    postFinished = pyqtSignal(bool, str, str, str)  # ok, err, leftCsv, rightCsv
+
     def __init__(self, config_dir="config", parent=None):
         super().__init__(parent)
         self._interface = motion_interface
@@ -78,6 +84,9 @@ class MOTIONConnector(QObject):
         self._trigger_state = "OFF"
         self._state = DISCONNECTED
         self.laser_params = self._load_laser_params(config_dir)
+
+        self._post_thread = None
+        self._post_cancel = threading.Event()
 
         self._capture_thread = None
         self._capture_stop = threading.Event()
@@ -503,6 +512,89 @@ class MOTIONConnector(QObject):
                     logger.error(f"Failed to send Software Reset")
         except Exception as e:
             logger.error(f"Error Sending Software Reset: {e}")
+
+    @pyqtSlot(str, str, result=bool)
+    def startPostProcess(self, left_raw: str, right_raw: str) -> bool:
+        """
+        Convert left/right .raw to .csv in-place (same directory).
+        Returns False if a post job is already running.
+        """
+        if self._post_thread is not None:
+            self.postLog.emit("Post-process already running.")
+            return False
+
+        left_raw = left_raw or ""
+        right_raw = right_raw or ""
+        self._post_cancel = threading.Event()
+
+        def _worker():
+            ok = True
+            err = ""
+            left_csv = ""
+            right_csv = ""
+
+            try:
+                proc = DataProcessor()
+
+                def _to_csv_path(p):
+                    base, ext = os.path.splitext(p)
+                    return base + ".csv" if base else ""
+
+                # Process LEFT
+                if left_raw and os.path.isfile(left_raw):
+                    self.postLog.emit(f"Processing LEFT: {os.path.basename(left_raw)}")
+                    self.postProgress.emit(5)
+                    left_csv = _to_csv_path(left_raw)
+                    proc.process_bin_file(left_raw, left_csv)
+                    self.postLog.emit(f"LEFT → {os.path.basename(left_csv)}")
+                    self.postProgress.emit(50)
+                else:
+                    if left_raw:
+                        self.postLog.emit(f"LEFT missing: {left_raw}")
+                    self.postProgress.emit(50)
+
+                # Cancel check between files
+                if self._post_cancel.is_set():
+                    ok = False
+                    err = "Canceled"
+                    return
+
+                # Process RIGHT
+                if right_raw and os.path.isfile(right_raw):
+                    self.postLog.emit(f"Processing RIGHT: {os.path.basename(right_raw)}")
+                    self.postProgress.emit(55)
+                    right_csv = _to_csv_path(right_raw)
+                    proc.process_bin_file(right_raw, right_csv)
+                    self.postLog.emit(f"RIGHT → {os.path.basename(right_csv)}")
+                    self.postProgress.emit(95)
+                else:
+                    if right_raw:
+                        self.postLog.emit(f"RIGHT missing: {right_raw}")
+                    self.postProgress.emit(95)
+
+                self.postProgress.emit(100)
+
+            except Exception as e:
+                ok = False
+                err = str(e)
+                self.postLog.emit(f"Post-process error: {err}")
+            finally:
+                # clear thread handle before emitting
+                self._post_thread = None
+                self.postFinished.emit(ok, err, left_csv or "", right_csv or "")
+                logger.info(f"Post-process finished: ok={ok}, err={err}, left_csv={left_csv}, right_csv={right_csv}")
+
+        self._post_thread = threading.Thread(target=_worker, daemon=True)
+        self._post_thread.start()
+        return True
+
+    @pyqtSlot()
+    def cancelPostProcess(self):
+        """Request cancel; takes effect between files."""
+        if self._post_thread is None:
+            return
+        self.postLog.emit("Cancel requested.")
+        self._post_cancel.set()
     
     @pyqtSlot(int)
     def startConfigureCameraSensors(self, camera_mask:int):
