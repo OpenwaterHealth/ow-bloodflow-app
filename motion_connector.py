@@ -7,6 +7,8 @@ import csv
 import os
 import datetime
 import time
+import random
+import string
 
 from motion_singleton import motion_interface  
 
@@ -37,6 +39,14 @@ class MOTIONConnector(QObject):
     safetyFailureStateChanged = pyqtSignal()  # Signal to notify QML of safety
     triggerStateChanged = pyqtSignal()  # Signal to notify QML of trigger state changes
     directoryChanged = pyqtSignal()  # Signal to notify QML of directory changes
+    subjectIdChanged = pyqtSignal()  # Signal to notify QML of subject ID changes
+    sensorDeviceInfoReceived = pyqtSignal(str, str)  # (fw_version, device_id)
+    consoleDeviceInfoReceived = pyqtSignal(str, str)  # (fw_version, device_id)
+    temperatureSensorUpdated = pyqtSignal(float)  # Temperature data
+    accelerometerSensorUpdated = pyqtSignal(float, float, float)  # (x, y, z)
+    gyroscopeSensorUpdated = pyqtSignal(float, float, float)  # (x, y, z)
+    rgbStateReceived = pyqtSignal(int, str)  # (state, state_text)
+
 
     def __init__(self):
         super().__init__()
@@ -61,14 +71,37 @@ class MOTIONConnector(QObject):
         self._directory = default_dir
         logger.info(f"[Connector] Default directory initialized to: {self._directory}")
 
+        self._subject_id = self.generate_subject_id()
+        logger.info(f"[Connector] Generated subject ID: {self._subject_id}")
 
+    def _refresh_connections(self):
+        """Re-read connection states from motion_interface and notify QML."""
+        console_connected, left_sensor_connected, right_sensor_connected = self._interface.is_device_connected()
+        logger.info(f"Connection status updated: Console={console_connected}, Left Sensor={left_sensor_connected}, Right Sensor={right_sensor_connected}")
+        changed = (
+            self._consoleConnected != console_connected or
+            self._leftSensorConnected != left_sensor_connected or
+            self._rightSensorConnected != right_sensor_connected
+        )
+
+        self._consoleConnected = console_connected
+        self._leftSensorConnected = left_sensor_connected
+        self._rightSensorConnected = right_sensor_connected
+
+        if changed:
+            self.connectionStatusChanged.emit()
+        self.update_state()
+        
     def connect_signals(self):
         """Connect LIFUInterface signals to QML."""
         motion_interface.signal_connect.connect(self.on_connected)
         motion_interface.signal_disconnect.connect(self.on_disconnected)
         motion_interface.signal_data_received.connect(self.on_data_received)
 
-
+    def generate_subject_id(self):
+        suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        return f"ow{suffix}"
+    
     def update_state(self):
         """Update system state based on connection and configuration."""
         if not self._consoleConnected and ((not self._leftSensorConnected) or (not self._rightSensorConnected)):
@@ -84,10 +117,29 @@ class MOTIONConnector(QObject):
         self.stateChanged.emit()  # Notify QML of state update
         logger.info(f"Updated state: {self._state}")
         
-
     @property
     def interface(self):
         return motion_interface
+    
+    # --- getters/setters for Qt ---
+    def getSubjectId(self) -> str:
+        return self._subject_id
+
+    def setSubjectId(self, value: str):
+        if not value:
+            return
+        # normalize to "ow" + alphanumerics (uppercase)
+        if value.startswith("ow"):
+            rest = value[2:]
+        else:
+            rest = value
+        rest = "".join(ch for ch in rest.upper() if ch.isalnum())
+        new_val = "ow" + rest
+        if new_val != self._subject_id:
+            self._subject_id = new_val
+            self.subjectIdChanged.emit()
+
+    subjectId = pyqtProperty(str, fget=getSubjectId, fset=setSubjectId, notify=subjectIdChanged)
     
     @pyqtProperty(bool, notify=connectionStatusChanged)
     def leftSensorConnected(self):
@@ -103,7 +155,6 @@ class MOTIONConnector(QObject):
     def consoleConnected(self):
         """Expose Console connection status to QML."""
         return self._consoleConnected
-
 
     @pyqtProperty(bool, notify=laserStateChanged)
     def laserOn(self):
@@ -166,15 +217,15 @@ class MOTIONConnector(QObject):
         elif descriptor.upper() == "CONSOLE":
             self._consoleConnected = False
 
-            # Stop status thread
-            if self._console_status_thread:
-                self._console_status_thread.stop()
-                self._console_status_thread = None
-
+        print(f"Device disconnected: {descriptor} on port {port}")
         self.signalDisconnected.emit(descriptor, port)
         self.connectionStatusChanged.emit() 
         self.update_state()
     
+    @pyqtSlot()
+    def refreshConnections(self):
+        self._refresh_connections()
+
     @pyqtSlot(str, str)
     def on_data_received(self, descriptor, message):
         """Handle incoming data from the LIFU device."""

@@ -37,7 +37,6 @@ Rectangle {
                 radius: 10
                 border.color: "#3E4E6F"
                 border.width: 2
-                enabled: MOTIONInterface.consoleConnected
 
                 ColumnLayout {
                     anchors.fill: parent
@@ -66,7 +65,7 @@ Rectangle {
 
                         TextField {
                             id: subjectIdField
-                            placeholderText: "Enter Subject ID"
+                            text: MOTIONInterface.subjectId
                             font.pixelSize: 16
                             color: "white"
                             Layout.fillWidth: true
@@ -75,6 +74,12 @@ Rectangle {
                                 radius: 4
                                 border.color: "#3E4E6F"
                                 border.width: 1
+                            }
+
+                            // push UI -> backend when user commits
+                            onEditingFinished: {
+                                if (text !== MOTIONInterface.subjectId)
+                                    MOTIONInterface.subjectId = text
                             }
                         }
                     }
@@ -105,7 +110,6 @@ Rectangle {
                                 id: notesField
                                 anchors.fill: parent
                                 anchors.margins: 15
-                                placeholderText: "Enter any relevant notes..."
                                 font.pixelSize: 14
                                 color: "white"
                                 wrapMode: Text.Wrap
@@ -178,7 +182,7 @@ Rectangle {
                             folderDialog.open()
                         }
                     }
-                    
+
                     Dialogs.FolderDialog {
                         id: folderDialog
                         title: "Select Default Data Directory"
@@ -491,14 +495,14 @@ Rectangle {
                         Button {
                             id: btnStartScan
                             text: "Start Scan"
-                            Layout.preferredWidth: 120
-                            Layout.preferredHeight: 40
+                            Layout.preferredWidth: 140
+                            Layout.preferredHeight: 60
                             hoverEnabled: enabled
-                            enabled: MOTIONInterface.consoleConnected
+                            enabled: MOTIONInterface.consoleConnected && (MOTIONInterface.leftSensorConnected || MOTIONInterface.rightSensorConnected)
 
                             contentItem: Text {
                                 text: parent.text
-                                font.pixelSize: 14
+                                font.pixelSize: 16
                                 color: parent.enabled ? "#BDC3C7" : "#7F8C8D"
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -510,32 +514,13 @@ Rectangle {
                             }
                             onClicked: {
                                 console.log("Start Scan", controlPanel.durationSec, "sec");
-                                // call your start with durationSec here
+                                // start scan
+                                // MOTIONInterface.startTrigger() 
+                                scanDialog.message = "Scanning"
+                                scanDialog.open()
                             }
                         }
-
-                        Button {
-                            id: btnStopScan
-                            text: "Stop Scan"
-                            Layout.preferredWidth: 120
-                            Layout.preferredHeight: 40
-                            hoverEnabled: enabled
-                            enabled: MOTIONInterface.consoleConnected
-
-                            contentItem: Text {
-                                text: parent.text
-                                font.pixelSize: 14
-                                color: parent.enabled ? "#BDC3C7" : "#7F8C8D"
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            background: Rectangle {
-                                color: !parent.enabled ? "#3A3F4B" : parent.hovered ? "#4A90E2" : "#3A3F4B"
-                                border.color: !parent.enabled ? "#7F8C8D" : parent.hovered ? "#FFFFFF" : "#BDC3C7"
-                                radius: 4
-                            }
-                            onClicked: console.log("Stop Scan")
-                        }
+                        
                     }
                 }
             }
@@ -552,11 +537,19 @@ Rectangle {
         function onSignalConnected(descriptor, port) {
             console.log(descriptor + " connected on " + port);
             statusText.text = "Connected: " + descriptor + " on " + port;
+
+            if ((descriptor || "").toUpperCase() === "CONSOLE") {
+                
+            }
         }
 
         function onSignalDisconnected(descriptor, port) {
             console.log(descriptor + " disconnected from " + port);
             statusText.text = "Disconnected: " + descriptor + " from " + port;
+            
+
+            if ((descriptor || "").toUpperCase() === "CONSOLE") {
+            }
         }
 
         function onSignalDataReceived(descriptor, message) {
@@ -565,9 +558,10 @@ Rectangle {
         
         function onConnectionStatusChanged() {          
             if (MOTIONInterface.leftSensorConnected) {
+
             }   
             if (MOTIONInterface.consoleConnected) {
-                consoleUpdateTimer.start()
+                
             }            
         }
         
@@ -585,6 +579,15 @@ Rectangle {
 
     Component.onDestruction: {
         console.log("Closing UI, clearing MOTIONInterface...");
+    }
+
+    ScanProgressDialog {
+        id: scanDialog
+        onCancelRequested: {
+            // Stop trigger and shutdown capture
+            // MOTIONInterface.stopTrigger()
+            scanDialog.close()
+        }
     }
 
 }
