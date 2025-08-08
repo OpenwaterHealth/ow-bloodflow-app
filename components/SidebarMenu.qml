@@ -43,6 +43,7 @@ Rectangle {
             buttonIcon: "\ueabf"
             buttonText: "Settings"
             Layout.alignment: Qt.AlignHCenter
+            enabled: false
             backgroundColor: sidebarMenu.activeButtonIndex === 3 ? "white" : "transparent"
             iconColor: sidebarMenu.activeButtonIndex === 3 ? "#2C3E50" : "#BDC3C7"
             onClicked: {
