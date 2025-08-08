@@ -178,13 +178,16 @@ Rectangle {
                             folderDialog.open()
                         }
                     }
-
+                    
                     Dialogs.FolderDialog {
                         id: folderDialog
                         title: "Select Default Data Directory"
-                        currentFolder: MOTIONInterface.directory
+                        currentFolder: Qt.platform.os === "windows"
+                            ? "file:///" + MOTIONInterface.directory.replace("\\", "/")
+                            : MOTIONInterface.directory
+
                         onAccepted: {
-                            MOTIONInterface.directory = folderDialog.selectedFolder
+                            MOTIONInterface.directory = folderDialog.selectedFolder.toString().replace("file:///", "")
                         }
                     }
                 }
