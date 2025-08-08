@@ -11,10 +11,11 @@ Item {
     // API
     signal cancelRequested()
     property alias message: titleLabel.text
+    property bool done: false            // 
     property int progress: 0            // <-- bind from ScanRunner
     property string stageText: ""       // <-- bind from ScanRunner
     function open()  { root.visible = true }
-    function close() { root.visible = false }
+    function close() { root.visible = false; root.done = false; }  // reset on close
     function appendLog(line) {
         if (!line) return
         if (logArea.text.length > 0) logArea.text += "\n"
@@ -135,7 +136,8 @@ Item {
                 Layout.alignment: Qt.AlignHCenter
                 spacing: 12
                 Button {
-                    text: "Cancel Scan"
+                    id: cancelButton
+                    text: root.done ? "Close" : "Cancel Scan" 
                     Layout.preferredWidth: 160
                     Layout.preferredHeight: 40
                     hoverEnabled: true

@@ -57,6 +57,7 @@ class MOTIONConnector(QObject):
     captureProgress = pyqtSignal(int)                       # 0..100
     captureLog = pyqtSignal(str)                            # log lines
     captureFinished = pyqtSignal(bool, str, str, str)       # ok, error, leftPath, rightPath
+    scanNotesChanged = pyqtSignal()
 
     def __init__(self, config_dir="config", parent=None):
         super().__init__(parent)
@@ -81,7 +82,7 @@ class MOTIONConnector(QObject):
         self._capture_running = False
         self._capture_left_path = ""
         self._capture_right_path = ""
-
+        self._scan_notes = ""  
         self.connect_signals()
 
         default_dir = os.path.join(os.getcwd(), "scan_data")
@@ -260,14 +261,17 @@ class MOTIONConnector(QObject):
         print(f"[Connector] Default directory set to: {self._directory}")
         self.directoryChanged.emit()
 
-    @pyqtProperty(str)
+    @pyqtProperty(str, notify=scanNotesChanged)   # <-- add notify
     def scanNotes(self):
-        return getattr(self, "_scan_notes", "")
+         return self._scan_notes
 
     @scanNotes.setter
-    def scanNotes(self, value):
-        self._scan_notes = value or ""
-        
+    def scanNotes(self, value: str):
+        value = value or ""
+        if value != self._scan_notes:
+            self._scan_notes = value
+            self.scanNotesChanged.emit()  
+            
     @pyqtSlot(result=str)
     def get_sdk_version(self):
         return self._interface.get_sdk_version()

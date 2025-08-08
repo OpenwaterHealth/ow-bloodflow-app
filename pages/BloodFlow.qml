@@ -597,9 +597,13 @@ Rectangle {
     ScanProgressDialog {
         id: scanDialog
         onCancelRequested: {
-            // Stop trigger and shutdown capture
-            // MOTIONInterface.stopTrigger()
-            scanRunner.cancel()
+            if (scanDialog.done) {
+                // After success or error review, Close should just dismiss
+                scanDialog.close()
+            } else {
+                // While running, Cancel should actually cancel the scan
+                scanRunner.cancel()
+            }
         }
     }
 
@@ -637,13 +641,26 @@ Rectangle {
         }
         onMessageOut: function(line) { scanDialog.appendLog(line) }
         onScanFinished: function(ok, err, left, right) {
+
+            if (err === "Canceled") {
+                // Cancel should CLOSE the dialog
+                scanDialog.close()
+                return
+            }
+
             if (!ok) {
                 scanDialog.appendLog("ERROR: " + err);
                 scanDialog.stageText = "Error during capture";
                 // keep it open so you can read the error
+                scanDialog.done = true
                 return;
             }
-            scanDialog.close();
+
+            // Success: keep open if you want, but make the button say Close
+            scanDialog.stageText = "Capture complete"
+            scanDialog.progress = 100
+            scanDialog.done = true
+            // scanDialog.close();
         }
     }
 }
