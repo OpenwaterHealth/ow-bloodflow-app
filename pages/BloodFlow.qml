@@ -1,0 +1,587 @@
+import QtQuick 6.0
+import QtQuick.Controls 6.0
+import QtQuick.Layouts 6.0
+import OpenMotion 1.0 
+import QtQuick.Dialogs as Dialogs
+
+
+import "../components"
+
+Rectangle {
+    id: bloodFlow
+    width: parent.width
+    height: parent.height
+    color: "#29292B" // Background color for Page 1
+    radius: 20
+    opacity: 0.95 // Slight transparency for the content area
+
+    // property to store selected directory
+    property string defaultDataDir: ""
+
+    // LAYOUT
+    RowLayout {
+        anchors.fill: parent
+        anchors.margins: 10
+        spacing: 10
+
+        // Left Column (Input Panel)
+        ColumnLayout {
+            spacing: 20
+
+            // Info container
+            Rectangle {
+                id: patientInfo
+                width: 500
+                height: 500
+                color: "#1E1E20"
+                radius: 10
+                border.color: "#3E4E6F"
+                border.width: 2
+                enabled: MOTIONInterface.consoleConnected
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 20
+                    spacing: 20
+
+                    // Title
+                    Text {
+                        text: "Patient Info"
+                        font.pixelSize: 20
+                        color: "#FFFFFF"
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+
+                    // Subject ID Field
+                    RowLayout {
+                        spacing: 10
+                        Layout.fillWidth: true
+
+                        Text {
+                            text: "Subject ID:"
+                            font.pixelSize: 16
+                            color: "#BDC3C7"
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+
+                        TextField {
+                            id: subjectIdField
+                            placeholderText: "Enter Subject ID"
+                            font.pixelSize: 16
+                            color: "white"
+                            Layout.fillWidth: true
+                            background: Rectangle {
+                                color: "#2E2E33"
+                                radius: 4
+                                border.color: "#3E4E6F"
+                                border.width: 1
+                            }
+                        }
+                    }
+
+                    // Notes Field (multi-line) - FIXED
+                    ColumnLayout {
+                        spacing: 6
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+
+                        Text {
+                            text: "Notes:"
+                            font.pixelSize: 16
+                            color: "#BDC3C7"
+                            horizontalAlignment: Text.AlignLeft
+                            Layout.alignment: Qt.AlignLeft
+                        }
+
+                        Rectangle {
+                            color: "#2E2E33"
+                            radius: 6
+                            border.color: "#3E4E6F"
+                            border.width: 1
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+
+                            TextArea {
+                                id: notesField
+                                anchors.fill: parent
+                                anchors.margins: 15
+                                placeholderText: "Enter any relevant notes..."
+                                font.pixelSize: 14
+                                color: "white"
+                                wrapMode: Text.Wrap
+                                background: null  // Use parent rectangle
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Data container
+            Rectangle {
+                id: dataDirInfo
+                width: 500
+                height: 160
+                color: "#1E1E20"
+                radius: 10
+                border.color: "#3E4E6F"
+                border.width: 2
+                enabled: true
+
+                // Default Data Directory Selection
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    spacing: 10
+
+                    Text {
+                        text: "Default Data Directory:"
+                        font.pixelSize: 16
+                        color: "#BDC3C7"
+                    }
+
+                    TextField {
+                        id: directoryField
+                        text: MOTIONInterface.directory
+                        readOnly: true
+                        font.pixelSize: 14
+                        color: "white"
+                        Layout.fillWidth: true
+                        background: Rectangle {
+                            color: "#2E2E33"
+                            radius: 4
+                            border.color: "#3E4E6F"
+                            border.width: 1
+                        }
+                    }
+                    
+                    Button {
+                        id: btnBrowse
+                        text: "Browse"
+                        Layout.preferredWidth: 120
+                        Layout.preferredHeight: 40
+                        Layout.alignment: Qt.AlignRight
+                        hoverEnabled: enabled          
+
+                        contentItem: Text {
+                            text: parent.text
+                            font.pixelSize: 14
+                            color: parent.enabled ? "#BDC3C7" : "#7F8C8D"
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            color: !parent.enabled ? "#3A3F4B" : parent.hovered ? "#4A90E2" : "#3A3F4B"
+                            border.color: !parent.enabled ? "#7F8C8D" : parent.hovered ? "#FFFFFF" : "#BDC3C7"
+                            radius: 4
+                        }
+                        onClicked: {
+                            folderDialog.open()
+                        }
+                    }
+
+                    Dialogs.FolderDialog {
+                        id: folderDialog
+                        title: "Select Default Data Directory"
+                        currentFolder: MOTIONInterface.directory
+                        onAccepted: {
+                            MOTIONInterface.directory = folderDialog.selectedFolder
+                        }
+                    }
+                }
+            }
+        }
+
+        // RIGHT COLUMN (Status Panel + Histogram)
+        ColumnLayout {
+            spacing: 20
+
+            // Sensor Panel
+            Rectangle {
+                id: sensorSelection
+                width: 500
+                height: 360
+                color: "#1E1E20"
+                radius: 10
+                border.color: "#3E4E6F"
+                border.width: 2
+                
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 20
+                    spacing: 40
+
+                    // Left Sensor Column
+                    ColumnLayout {
+                        spacing: 10
+                        Layout.alignment: Qt.AlignHCenter
+
+                        SensorView {
+                            id: leftSensorView
+                            title: "Left Sensor"
+                        }
+
+                        ComboBox {
+                            id: leftSensorSelector
+                            Layout.preferredWidth: 200
+                            Layout.preferredHeight: 40
+                            model: ["Default"]
+
+                            onCurrentIndexChanged: {
+                                switch (currentIndex) {
+                                    case 0: leftSensorView.sensorActive = [false,false,true,true,false,false,true,true]; break;
+                                }
+                            }
+                        }
+                    }
+
+                    // Right Sensor Column
+                    ColumnLayout {
+                        spacing: 10
+                        Layout.alignment: Qt.AlignHCenter
+
+                        SensorView {
+                            id: rightSensorView
+                            title: "Right Sensor"
+                        }
+
+                        ComboBox {
+                            id: rightSensorSelector
+                            Layout.preferredWidth: 200
+                            Layout.preferredHeight: 40
+                            model: ["Default"]
+
+                            onCurrentIndexChanged: {
+                                switch (currentIndex) {
+                                    case 0: rightSensorView.sensorActive = [false,false,true,true,false,false,true,true]; break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+
+            // Status Panel (Connection Indicators)
+            Rectangle {
+                id: statusPanel
+                width: 500
+                height: 120
+                color: "#1E1E20"
+                radius: 10
+                border.color: "#3E4E6F"
+                border.width: 2
+                
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    spacing: 20
+
+                    // Right Column: status and indicators
+                    ColumnLayout {
+                        spacing: 10
+                        Layout.preferredWidth: statusPanel.width/2
+                        Layout.fillHeight: true
+                        Layout.alignment: Qt.AlignVCenter | Qt.AlignHCenter
+
+                        RowLayout {
+                            spacing: 30
+                            Layout.alignment: Qt.AlignVCenter | Qt.AlignHCenter
+
+                            Text {
+                                id: statusText
+                                text: "System State: " + (MOTIONInterface.state === 0 ? "Disconnected"
+                                                : MOTIONInterface.state === 1 ? "Sensor Connected"
+                                                : MOTIONInterface.state === 2 ? "Console Connected"
+                                                : MOTIONInterface.state === 3 ? "Ready"
+                                                : "Running")
+                                font.pixelSize: 16
+                                color: "#BDC3C7"
+                                horizontalAlignment: Text.AlignRight
+                                Layout.alignment: Qt.AlignRight
+                            }
+                        }
+
+                        RowLayout {
+                            spacing: 30
+                            Layout.alignment: Qt.AlignHCenter
+
+                            // Sensor Indicator
+                            ColumnLayout {
+                                spacing: 2
+                                Layout.alignment: Qt.AlignHCenter
+
+                                Text {
+                                    text: "Sensors"
+                                    font.pixelSize: 14
+                                    color: "#BDC3C7"
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
+
+                                RowLayout {
+                                    spacing: 4
+                                    Layout.alignment: Qt.AlignHCenter
+
+                                    Rectangle {
+                                        width: 20; height: 20; radius: 10
+                                        color: MOTIONInterface.leftSensorConnected ? "green" : "red"
+                                        border.color: "black"; border.width: 1
+                                    }
+
+                                    Rectangle {
+                                        width: 20; height: 20; radius: 10
+                                        color: MOTIONInterface.rightSensorConnected ? "green" : "red"
+                                        border.color: "black"; border.width: 1
+                                    }
+                                }
+                            }
+
+                            // Console Indicator
+                            ColumnLayout {
+                                spacing: 4
+                                Layout.alignment: Qt.AlignHCenter
+
+                                Text {
+                                    text: "Console"
+                                    font.pixelSize: 14
+                                    color: "#BDC3C7"
+                                    horizontalAlignment: Text.AlignHCenter
+                                    Layout.alignment: Qt.AlignHCenter
+                                }
+
+                                Rectangle {
+                                    width: 20; height: 20; radius: 10
+                                    color: MOTIONInterface.consoleConnected ? "green" : "red"
+                                    border.color: "black"; border.width: 1
+                                    Layout.alignment: Qt.AlignHCenter
+                                }
+                            }
+
+                            // Laser Indicator
+                            ColumnLayout {
+                                spacing: 4
+                                Layout.alignment: Qt.AlignHCenter
+
+                                Text {
+                                    text: "Laser"
+                                    font.pixelSize: 14
+                                    color: "#BDC3C7"
+                                    horizontalAlignment: Text.AlignHCenter
+                                    Layout.alignment: Qt.AlignHCenter
+                                }
+
+                                Rectangle {
+                                    width: 20; height: 20; radius: 10
+                                    color: MOTIONInterface.triggerState === "ON" ? "green" : "red"
+                                    border.color: "black"; border.width: 1
+                                    Layout.alignment: Qt.AlignHCenter
+                                }
+                            }
+
+                            // Failure Indicator
+                            ColumnLayout {
+                                spacing: 4
+                                Layout.alignment: Qt.AlignHCenter
+
+                                Text {
+                                    text: "Failure"
+                                    font.pixelSize: 14
+                                    color: "#BDC3C7"
+                                    horizontalAlignment: Text.AlignHCenter
+                                    Layout.alignment: Qt.AlignHCenter
+                                }
+
+                                Rectangle {
+                                    width: 20; height: 20; radius: 10
+                                    color: MOTIONInterface.safetyFailure ? "red" : "grey"
+                                    border.color: "black"; border.width: 1
+                                    Layout.alignment: Qt.AlignHCenter
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Controls
+            Rectangle {
+                id: controlPanel
+                width: 500
+                height: 160
+                color: "#1E1E20"
+                radius: 10
+                border.color: "#3E4E6F"
+                border.width: 2
+
+                // public duration value (seconds)
+                property int durationSec: 30
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    spacing: 12
+
+                    // === Duration row ===
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
+
+                        Text {
+                            text: "Duration:"
+                            color: "#BDC3C7"
+                            font.pixelSize: 14
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+
+                        Slider {
+                            id: durationSlider
+                            from: 0
+                            to: 120
+                            stepSize: 1
+                            snapMode: Slider.SnapOnRelease
+                            value: controlPanel.durationSec
+                            Layout.fillWidth: true
+                            onValueChanged: controlPanel.durationSec = Math.round(value)
+                        }
+
+                        TextField {
+                            id: durationEdit
+                            text: String(controlPanel.durationSec)
+                            inputMethodHints: Qt.ImhDigitsOnly
+                            validator: IntValidator { bottom: 0; top: 120 }
+                            font.pixelSize: 14
+                            color: "white"
+                            horizontalAlignment: Text.AlignHCenter
+                            Layout.preferredWidth: 64
+                            background: Rectangle {
+                                color: "#2E2E33"; radius: 4
+                                border.color: "#3E4E6F"; border.width: 1
+                            }
+
+                            // keep in sync with slider, clamp 0..120
+                            onEditingFinished: {
+                                let v = parseInt(text);
+                                if (isNaN(v)) v = controlPanel.durationSec;
+                                v = Math.max(0, Math.min(120, v));
+                                controlPanel.durationSec = v;
+                                durationSlider.value = v;
+                                text = String(v);
+                            }
+                        }
+
+                        Text {
+                            text: "sec"
+                            color: "#BDC3C7"
+                            font.pixelSize: 14
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+                    }
+
+                    // spacer pushes buttons to bottom
+                    Item { Layout.fillHeight: true }
+
+                    // === Bottom buttons ===
+                    RowLayout {
+                        Layout.alignment: Qt.AlignHCenter
+                        spacing: 40
+
+                        Button {
+                            id: btnStartScan
+                            text: "Start Scan"
+                            Layout.preferredWidth: 120
+                            Layout.preferredHeight: 40
+                            hoverEnabled: enabled
+                            enabled: MOTIONInterface.consoleConnected
+
+                            contentItem: Text {
+                                text: parent.text
+                                font.pixelSize: 14
+                                color: parent.enabled ? "#BDC3C7" : "#7F8C8D"
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            background: Rectangle {
+                                color: !parent.enabled ? "#3A3F4B" : parent.hovered ? "#4A90E2" : "#3A3F4B"
+                                border.color: !parent.enabled ? "#7F8C8D" : parent.hovered ? "#FFFFFF" : "#BDC3C7"
+                                radius: 4
+                            }
+                            onClicked: {
+                                console.log("Start Scan", controlPanel.durationSec, "sec");
+                                // call your start with durationSec here
+                            }
+                        }
+
+                        Button {
+                            id: btnStopScan
+                            text: "Stop Scan"
+                            Layout.preferredWidth: 120
+                            Layout.preferredHeight: 40
+                            hoverEnabled: enabled
+                            enabled: MOTIONInterface.consoleConnected
+
+                            contentItem: Text {
+                                text: parent.text
+                                font.pixelSize: 14
+                                color: parent.enabled ? "#BDC3C7" : "#7F8C8D"
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            background: Rectangle {
+                                color: !parent.enabled ? "#3A3F4B" : parent.hovered ? "#4A90E2" : "#3A3F4B"
+                                border.color: !parent.enabled ? "#7F8C8D" : parent.hovered ? "#FFFFFF" : "#BDC3C7"
+                                radius: 4
+                            }
+                            onClicked: console.log("Stop Scan")
+                        }
+                    }
+                }
+            }
+
+
+        }
+
+    }
+    
+    // **Connections for MOTIONConnector signals**
+    Connections {
+        target: MOTIONInterface
+
+        function onSignalConnected(descriptor, port) {
+            console.log(descriptor + " connected on " + port);
+            statusText.text = "Connected: " + descriptor + " on " + port;
+        }
+
+        function onSignalDisconnected(descriptor, port) {
+            console.log(descriptor + " disconnected from " + port);
+            statusText.text = "Disconnected: " + descriptor + " from " + port;
+        }
+
+        function onSignalDataReceived(descriptor, message) {
+            console.log("Data from " + descriptor + ": " + message);
+        }
+        
+        function onConnectionStatusChanged() {          
+            if (MOTIONInterface.leftSensorConnected) {
+            }   
+            if (MOTIONInterface.consoleConnected) {
+                consoleUpdateTimer.start()
+            }            
+        }
+        
+        function onLaserStateChanged() {          
+            if (MOTIONInterface.consoleConnected) {
+            }            
+        }
+        
+        function onSafetyFailureStateChanged() {          
+            if (MOTIONInterface.consoleConnected) {
+            }            
+        }
+
+    }
+
+    Component.onDestruction: {
+        console.log("Closing UI, clearing MOTIONInterface...");
+    }
+
+}

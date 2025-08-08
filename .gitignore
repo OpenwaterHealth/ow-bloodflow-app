@@ -1,0 +1,87 @@
+# Byte-compiled files
+*.pyc
+*.pyo
+__pycache__/
+
+# Compiled QRC resources
+resources_rc.py
+
+# Compiled object files
+*.obj
+*.o
+*.so
+
+# Backup files
+*~
+*.bak
+*.swp
+*.tmp
+*.old
+*.orig
+*.log
+
+# PyQt6 build files
+*.qmake.stash
+*.qmake.cache
+build/
+
+# Virtual environment
+.env/
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+*.env
+
+# Python packaging
+*.egg-info/
+dist/
+build/
+eggs/
+wheels/
+*.egg
+pip-log.txt
+pip-delete-this-directory.txt
+
+# IDE and editor-specific files
+.idea/
+.vscode/
+*.iml
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Qt-related generated files
+*.qmlc
+*.jsc
+.moc/
+
+# Test results and coverage
+htmlcov/
+.tox/
+.nox/
+.cache/
+.coverage
+coverage.*
+nosetests.xml
+pytest_cache/
+.pytest_cache/
+test_output/
+junit/
+
+# Log files
+*.log
+
+# Windows specific
+*.db
+*.dll
+*.lnk
+
+# macOS specific
+*.DS_Store
+
+local_notes.md
+/scan_data/
