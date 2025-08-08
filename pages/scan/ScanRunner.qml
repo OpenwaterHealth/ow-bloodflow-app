@@ -35,7 +35,6 @@ QtObject {
     property SetTriggerLaserTask setTask: SetTriggerLaserTask {
         connector: runner.connector
         laserOn: runner.laserOn
-        laserPower: runner.laserPower
         triggerConfig: runner.triggerConfig
         onStarted: stageUpdate("Setting trigger & laser…")
         onProgress: function(pct) { progressUpdate(pct) }

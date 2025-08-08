@@ -619,8 +619,8 @@ Rectangle {
             "LaserPulseDelayUsec": 100,
             "LaserPulseWidthUsec": 500,
             "LaserPulseSkipInterval": 600,
-            "EnableSyncOut": True,
-            "EnableTaTrigger": True
+            "EnableSyncOut": true,
+            "EnableTaTrigger": true
         })
 
 
