@@ -253,7 +253,7 @@ Rectangle {
                             id: leftSensorSelector
                             Layout.preferredWidth: 200
                             Layout.preferredHeight: 40
-                            model: ["Default", "Middle"] // ["Default"] // "Middle"
+                            model: ["Default"] // "Middle"
 
                             onCurrentIndexChanged: {
                                 switch (currentIndex) {
@@ -278,7 +278,7 @@ Rectangle {
                             id: rightSensorSelector
                             Layout.preferredWidth: 200
                             Layout.preferredHeight: 40
-                            model: ["Default", "Middle"] 
+                            model: ["Default"] 
 
                             onCurrentIndexChanged: {
                                 switch (currentIndex) {
