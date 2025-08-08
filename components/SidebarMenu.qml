@@ -38,16 +38,28 @@ Rectangle {
             }
         }
 
+        // Data Analysis Button
+        IconButton {
+            buttonIcon: "\uf080"
+            buttonText: "Analyze"
+            Layout.alignment: Qt.AlignHCenter
+            backgroundColor: sidebarMenu.activeButtonIndex === 1 ? "white" : "transparent"
+            iconColor: sidebarMenu.activeButtonIndex === 1 ? "#2C3E50" : "#BDC3C7"
+            onClicked: {
+                sidebarMenu.handleButtonClick(1); // Call the global function
+            }
+        }
+
         // Settings Button
         IconButton {
             buttonIcon: "\ueabf"
             buttonText: "Settings"
             Layout.alignment: Qt.AlignHCenter
             enabled: false
-            backgroundColor: sidebarMenu.activeButtonIndex === 3 ? "white" : "transparent"
-            iconColor: sidebarMenu.activeButtonIndex === 3 ? "#2C3E50" : "#BDC3C7"
+            backgroundColor: sidebarMenu.activeButtonIndex === 2 ? "white" : "transparent"
+            iconColor: sidebarMenu.activeButtonIndex === 2 ? "#2C3E50" : "#BDC3C7"
             onClicked: {
-                sidebarMenu.handleButtonClick(3); // Call the global function
+                sidebarMenu.handleButtonClick(2); // Call the global function
             }
         }
     }

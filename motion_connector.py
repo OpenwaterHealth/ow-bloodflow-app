@@ -1,5 +1,6 @@
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtProperty, pyqtSlot, QVariant, QThread, QWaitCondition, QMutex, QMutexLocker
 from typing import List
+from pathlib import Path
 import logging
 import base58
 import threading
@@ -10,6 +11,7 @@ import os
 import datetime
 import time
 import random
+import re
 import string
 
 from motion_singleton import motion_interface  
@@ -620,7 +622,72 @@ class MOTIONConnector(QObject):
 
         except Exception as e:
             logging.error(f"Console status query failed: {e}")
-                
+
+    @pyqtSlot(result=list)
+    def get_scan_list(self):
+        """Return sorted list of scans like 'owABCD12_YYYYMMDD_HHMMSS'."""
+        base_path = Path(self._directory)
+        if not base_path.exists():
+            return []
+
+        ids = []
+        for f in base_path.glob("scan_*_notes.txt"):
+            if not f.is_file():
+                continue
+            stem = f.stem  # e.g., "scan_owIZGDFP_20250808_120740_notes"
+            # strip leading "scan_" and trailing "_notes"
+            if stem.startswith("scan_"):
+                stem = stem[5:]
+            if stem.endswith("_notes"):
+                stem = stem[:-6]
+            ids.append(stem)
+
+        # sort by timestamp desc; assumes format owXXXXXX_YYYYMMDD_HHMMSS
+        def ts_key(s):
+            parts = s.split("_", 1)
+            return parts[1] if len(parts) == 2 else s
+        return sorted(ids, key=ts_key, reverse=True)
+
+    @pyqtSlot(str, result=QVariant)
+    def get_scan_details(self, scan_id: str):
+        """
+        scan_id like 'owIZGDFP_20250808_120740' (no 'scan_' prefix).
+        """
+        base = Path(self._directory)
+        try:
+            subject, ts = scan_id.split("_", 1)
+        except ValueError:
+            return {}
+
+        notes_path = base / f"scan_{scan_id}_notes.txt"
+        left  = next(base.glob(f"scan_{scan_id}_left_mask*.raw"), None)
+        right = next(base.glob(f"scan_{scan_id}_right_mask*.raw"), None)
+
+        mask = ""
+        for p in (left, right):
+            if p:
+                m = re.search(r"_mask([0-9A-Fa-f]+)\.raw$", p.name)
+                if m:
+                    mask = m.group(1)
+                    break
+
+        notes = ""
+        try:
+            notes = notes_path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+
+        return {
+            "subjectId": subject,
+            "timestamp": ts,
+            "maskHex": mask,
+            "leftPath": str(left) if left else "",
+            "rightPath": str(right) if right else "",
+            "notesPath": str(notes_path),
+            "notes": notes,
+        }
+
+
     @pyqtSlot()
     def shutdown(self):
         logger.info("Shutting down MOTIONConnector...")

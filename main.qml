@@ -71,7 +71,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     source: activeMenu === 0 ? "pages/BloodFlow.qml"
-                        : activeMenu === 1 ? "pages/Settings.qml"
+                        : activeMenu === 1 ? "pages/DataAnalysis.qml"
+                        : activeMenu === 2 ? "pages/Settings.qml"
                         : "pages/Splash.qml"
 
                 }
