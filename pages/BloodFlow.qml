@@ -6,6 +6,7 @@ import QtQuick.Dialogs as Dialogs
 
 
 import "../components"
+import "./scan"
 
 Rectangle {
     id: bloodFlow
@@ -519,8 +520,14 @@ Rectangle {
                                 console.log("Start Scan", controlPanel.durationSec, "sec");
                                 // start scan
                                 // MOTIONInterface.startTrigger() 
-                                scanDialog.message = "Scanning"
-                                scanDialog.open()
+                                //scanDialog.message = "Scanning"
+                                //scanDialog.open()
+                                
+                                scanDialog.message = "Scanning…";
+                                scanDialog.stageText = "Preparing…";
+                                scanDialog.progress = 1;
+                                scanDialog.open();
+                                scanRunner.start();
                             }
                         }
                         
@@ -589,8 +596,45 @@ Rectangle {
         onCancelRequested: {
             // Stop trigger and shutdown capture
             // MOTIONInterface.stopTrigger()
-            scanDialog.close()
+            scanRunner.cancel()
         }
     }
 
+    ScanRunner {
+        id: scanRunner
+        // connector: use the globally-exposed connector if it exists, else null
+        connector: MOTIONInterface
+
+        // inputs with safe fallbacks
+        cameraMask: 0x5A // compute this from the dropdown later
+        durationSec: controlPanel.durationSec
+        subjectId: subjectIdField.text
+        dataDir: directoryField.text
+        disableLaser: false                        // add a checkbox later 
+        laserOn: true
+        laserPower: 50
+        triggerConfig: (typeof appTriggerConfig !== "undefined") ? appTriggerConfig : ({
+            "frequencyHz": 200,
+            "pulseCount": 10,
+            "pulseWidthUsec": 2000,
+            "trainIntervalMs": 1000,
+            "trainCount": 1,
+            "mode": "single"
+        })
+
+
+        onStageUpdate: function(txt) {
+            if (!scanDialog.visible) scanDialog.open();
+            scanDialog.stageText = txt;
+        }
+        onProgressUpdate: function(pct) {
+            if (!scanDialog.visible) scanDialog.open();
+            scanDialog.progress = pct;
+        }
+        onMessageOut: function(line) { scanDialog.appendLog(line) }
+        onScanFinished: function(ok, err, left, right) {
+            if (!ok) scanDialog.appendLog("ERROR: " + err);
+            scanDialog.close();
+        }
+    }
 }

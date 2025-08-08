@@ -47,6 +47,9 @@ class MOTIONConnector(QObject):
     gyroscopeSensorUpdated = pyqtSignal(float, float, float)  # (x, y, z)
     rgbStateReceived = pyqtSignal(int, str)  # (state, state_text)
 
+    configProgress = pyqtSignal(int)
+    configLog = pyqtSignal(str)
+    configFinished = pyqtSignal(bool, str)
 
     def __init__(self):
         super().__init__()
@@ -58,6 +61,7 @@ class MOTIONConnector(QObject):
         self._leftSensorConnected = left_sensor_connected
         self._rightSensorConnected = right_sensor_connected
         self._consoleConnected = console_connected
+        self._config_thread = None
         self._laserOn = False
         self._safetyFailure = False
         self._running = False
@@ -419,6 +423,82 @@ class MOTIONConnector(QObject):
         except Exception as e:
             logger.error(f"Error Sending Software Reset: {e}")
     
+    @pyqtSlot(int)
+    def startConfigureCameraSensors(self, camera_mask:int):
+        if self._config_thread: return
+        w = _ConfigureWorker(self._interface, camera_mask)
+        w.progress.connect(self.configProgress.emit)
+        w.log.connect(self.configLog.emit)
+        w.finished.connect(self._on_config_finished)
+        self._config_thread = w
+        w.start()
+
+    @pyqtSlot()
+    def cancelConfigureCameraSensors(self):
+        if self._config_thread: self._config_thread.stop()
+
+    def _on_config_finished(self, ok:bool, err:str):
+        if self._config_thread:
+            self._config_thread.quit(); self._config_thread.wait(2000); self._config_thread = None
+        self.configFinished.emit(ok, err)
+
+    @pyqtSlot(int, result=bool)
+    def configureCameraSensors(self, camera_mask: int) -> bool:
+        """
+        Programs the FPGA on each selected camera and configures sensor registers.
+        camera_mask: bitmask over 8 camera positions (bit 0 => position 1, etc.)
+        Returns True on full success, False if any step fails.
+        """
+        logger.info(f"[Connector] configureCameraSensors called with mask=0x{camera_mask:02X}")
+        try:
+            start_time = time.time()
+            interface = self._interface  # motion_interface singleton
+
+            # Turn mask into positions [0..7] (bits set)
+            camera_positions = [i for i in range(8) if (camera_mask & (1 << i))]
+            if not camera_positions:
+                logger.error("configureCameraSensors: camera_mask is empty (0).")
+                return False
+
+            for pos in camera_positions:
+                cam_mask_single = 1 << pos
+                logger.info(f"Programming camera FPGA at position {pos + 1} (mask 0x{cam_mask_single:02X})…")
+
+                # 1) Program FPGA
+                results = interface.run_on_sensors(
+                    "program_fpga",
+                    camera_position=cam_mask_single,
+                    manual_process=False
+                )
+                # Expecting a dict like {"left": True/False, "right": True/False}
+                if isinstance(results, dict):
+                    for side, success in results.items():
+                        if not success:
+                            logger.error(f"Failed to program FPGA on {side} sensor (pos {pos+1}).")
+                            return False
+                elif results is not True:
+                    logger.error(f"program_fpga returned unexpected result: {results!r}")
+                    return False
+
+                # 2) Configure camera sensor registers
+                logger.info(f"Configuring camera sensor registers at position {pos + 1}…")
+                cfg_res = interface.run_on_sensors(
+                    "camera_configure_registers",
+                    camera_position=cam_mask_single
+                )
+                # Many backends return dict/bool; treat Falsey as failure
+                if not cfg_res:
+                    logger.error(f"camera_configure_registers failed at position {pos + 1}: {cfg_res!r}")
+                    return False
+
+            elapsed_ms = (time.time() - start_time) * 1000.0
+            logger.info(f"FPGAs programmed & registers configured | Time: {elapsed_ms:.2f} ms")
+            return True
+
+        except Exception as e:
+            logger.exception(f"configureCameraSensors error: {e}")
+            return False
+
     @pyqtSlot()
     def readSafetyStatus(self):
         # Replace this with your actual console status check
@@ -474,4 +554,49 @@ class MOTIONConnector(QObject):
             self._console_status_thread.stop()
             self._console_status_thread = None
 
-                
+
+# --- worker to run config off the GUI thread ---
+class _ConfigureWorker(QThread):
+    progress = pyqtSignal(int)
+    log = pyqtSignal(str)
+    finished = pyqtSignal(bool, str)
+    def __init__(self, interface, camera_mask:int):
+        super().__init__()
+        self.interface = interface
+        self.camera_mask = camera_mask
+        self._stop = False
+    def stop(self): self._stop = True
+    def run(self):
+        import time
+        # log hex mask
+        logger.info(f"[Connector] configure worker mask=0x{self.camera_mask:02X}")
+        positions = [i for i in range(8) if (self.camera_mask & (1<<i))]
+        if not positions:
+            self.finished.emit(False, "Empty camera mask"); return
+        total= len(positions)*2; done=0
+        for pos in positions:
+            if self._stop: self.finished.emit(False,"Canceled"); return
+            cam_mask_single = 1<<pos
+            msg = f"Programming camera FPGA at position {pos+1} (mask 0x{cam_mask_single:02X})…"
+            logger.info(msg); self.log.emit(msg)
+            results = self.interface.run_on_sensors("program_fpga", camera_position=cam_mask_single, manual_process=False)
+            if isinstance(results, dict):
+                for side, ok in results.items():
+                    if not ok:
+                        err=f"Failed to program FPGA on {side} sensor (pos {pos+1})."
+                        logger.error(err); self.log.emit(err); self.finished.emit(False, err); return
+            elif results is not True:
+                err=f"program_fpga unexpected: {results!r}"
+                logger.error(err); self.log.emit(err); self.finished.emit(False, err); return
+            done+=1; self.progress.emit(int(5 + (done/total)*15))
+
+            if self._stop: self.finished.emit(False,"Canceled"); return
+            msg=f"Configuring camera sensor registers at position {pos+1}…"
+            logger.info(msg); self.log.emit(msg)
+            cfg = self.interface.run_on_sensors("camera_configure_registers", camera_position=cam_mask_single)
+            if not cfg:
+                err=f"camera_configure_registers failed at position {pos+1}: {cfg!r}"
+                logger.error(err); self.log.emit(err); self.finished.emit(False, err); return
+            done+=1; self.progress.emit(int(5 + (done/total)*15))
+        logger.info("FPGAs programmed & registers configured")
+        self.finished.emit(True, "")
