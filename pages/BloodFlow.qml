@@ -21,7 +21,10 @@ Rectangle {
     // LAYOUT
     RowLayout {
         anchors.fill: parent
-        anchors.margins: 10
+        anchors.leftMargin: 30   // extra left space
+        anchors.topMargin: 10
+        anchors.rightMargin: 10
+        anchors.bottomMargin: 10
         spacing: 10
 
         // Left Column (Input Panel)

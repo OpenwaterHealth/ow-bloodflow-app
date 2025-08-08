@@ -65,6 +65,7 @@ ApplicationWindow {
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                anchors.leftMargin: 40
                 spacing: 20
 
                 Loader {
