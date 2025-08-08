@@ -19,6 +19,21 @@ Rectangle {
     // property to store selected directory
     property string defaultDataDir: ""
 
+    // Convert sensorActive[0..7] -> bitmask using mapping: [0,7,1,6,2,5,3,4]
+    function maskFromArray(arr) {
+        if (!arr || arr.length !== 8) return 0;
+        const bitMap = [0, 7, 1, 6, 2, 5, 3, 4];  // index i -> bit number
+        var m = 0;
+        for (var i = 0; i < 8; i++) {
+            if (arr[i]) m |= (1 << bitMap[i]);
+        }
+        return m;
+    }
+
+    // Reactive masks (auto-update when sensorActive arrays change)
+    property int leftMask:  maskFromArray(leftSensorView.sensorActive)
+    property int rightMask: maskFromArray(rightSensorView.sensorActive)
+
     // LAYOUT
     RowLayout {
         anchors.fill: parent
@@ -238,12 +253,14 @@ Rectangle {
                             id: leftSensorSelector
                             Layout.preferredWidth: 200
                             Layout.preferredHeight: 40
-                            model: ["Default"]
+                            model: ["Default","Middle"]
 
                             onCurrentIndexChanged: {
                                 switch (currentIndex) {
-                                    case 0: leftSensorView.sensorActive = [false,false,true,true,false,false,true,true]; break;
+                                    case 0: leftSensorView.sensorActive = [false,false,true,true,false,false,true,true]; break;  // 0x5A
+                                    case 1: leftSensorView.sensorActive = [false,false,true,true,true,true,false,false]; break;  // 0x66
                                 }
+                                console.log("Left mask -> 0x" + leftMask.toString(16).toUpperCase());
                             }
                         }
                     }
@@ -262,18 +279,27 @@ Rectangle {
                             id: rightSensorSelector
                             Layout.preferredWidth: 200
                             Layout.preferredHeight: 40
-                            model: ["Default"]
+                            model: ["Default","Middle"]
 
                             onCurrentIndexChanged: {
                                 switch (currentIndex) {
-                                    case 0: rightSensorView.sensorActive = [false,false,true,true,false,false,true,true]; break;
-                                }
+                                    case 0: rightSensorView.sensorActive = [false,false,true,true,false,false,true,true]; break;  // 0x5A
+                                    case 1: rightSensorView.sensorActive = [false,false,true,true,true,true,false,false]; break;  // 0x66
+                                }                                
+                                console.log("Right mask -> 0x" + rightMask.toString(16).toUpperCase());
                             }
                         }
                     }
+
+                    Component.onCompleted: {
+                        // Force default selection handlers to run so sensorActive arrays are set
+                        leftSensorSelector.currentIndex = 0;
+                        rightSensorSelector.currentIndex = 0;
+                        console.log("Left mask=0x" + leftMask.toString(16).toUpperCase(),
+                                    "Right mask=0x" + rightMask.toString(16).toUpperCase());
+                    }
                 }
             }
-
 
             // Status Panel (Connection Indicators)
             Rectangle {
@@ -613,7 +639,9 @@ Rectangle {
         connector: MOTIONInterface
 
         // inputs with safe fallbacks
-        cameraMask: 0x5A // compute this from the dropdown later
+        leftMask: bloodFlow.leftMask
+        rightMask: bloodFlow.rightMask
+        cameraMask: bloodFlow.leftMask // need to issue masks for each side currently just takes one mask
         durationSec: controlPanel.durationSec
         subjectId: subjectIdField.text
         dataDir: directoryField.text

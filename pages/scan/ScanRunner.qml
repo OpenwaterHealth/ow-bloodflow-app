@@ -6,7 +6,11 @@ QtObject {
     id: runner
     property var connector
 
-    property int cameraMask: 0x03
+
+    property int leftMask: 0x00
+    property int rightMask: 0x00
+
+    property int cameraMask: 0x5A
     property int durationSec: 60
     property string subjectId: ""
     property string dataDir: ""
@@ -39,9 +43,9 @@ QtObject {
         onStarted: {
             runner._stage = "flash"
             stageUpdate("Configuring sensors/FPGA…")
-            // watchdog ~70s (your log showed ~50s)
+            // watchdog ~180s (your log showed ~50s)
             if (_wd) try { _wd.stop() } catch(e) {}
-            _wd = Qt.createQmlObject('import QtQuick 6.5; Timer { interval: 70000; repeat: false }', flashTask, "flashWD")
+            _wd = Qt.createQmlObject('import QtQuick 6.5; Timer { interval: 180000; repeat: false }', flashTask, "flashWD")
             _wd.triggered.connect(function() {
                 messageOut("Flash step timed out.")
                 runner._finish(false, "Flash step timed out", "", "")
