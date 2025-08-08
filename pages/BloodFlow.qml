@@ -118,6 +118,9 @@ Rectangle {
                                 color: "white"
                                 wrapMode: Text.Wrap
                                 background: null  // Use parent rectangle
+
+                                text: MOTIONInterface.scanNotes   // Initial value from backend
+                                onTextChanged: MOTIONInterface.scanNotes = text  // Push updates back
                             }
                         }
                     }

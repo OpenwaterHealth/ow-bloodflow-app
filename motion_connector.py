@@ -259,7 +259,15 @@ class MOTIONConnector(QObject):
         self._directory = path
         print(f"[Connector] Default directory set to: {self._directory}")
         self.directoryChanged.emit()
-    
+
+    @pyqtProperty(str)
+    def scanNotes(self):
+        return getattr(self, "_scan_notes", "")
+
+    @scanNotes.setter
+    def scanNotes(self, value):
+        self._scan_notes = value or ""
+        
     @pyqtSlot(result=str)
     def get_sdk_version(self):
         return self._interface.get_sdk_version()
@@ -759,6 +767,15 @@ class MOTIONConnector(QObject):
                 ok = not self._capture_stop.is_set()
                 if ok:
                     self.captureLog.emit("Capture session complete.")
+                    # save notes file for the whole scan
+                    try:
+                        notes_filename = f"scan_{subject_id}_{ts}_notes.txt"
+                        notes_path = os.path.join(data_dir, notes_filename)
+                        with open(notes_path, "w", encoding="utf-8") as nf:
+                            nf.write(self._scan_notes.strip() + "\n")
+                        logger.info(f"Saved scan notes to {notes_path}")
+                    except Exception as e:
+                        logger.error(f"Failed to save scan notes: {e}")
                 else:
                     err = "Capture canceled"
 
