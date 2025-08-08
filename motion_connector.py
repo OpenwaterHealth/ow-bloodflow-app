@@ -370,11 +370,11 @@ class MOTIONConnector(QObject):
                 updateTrigger = trigger_setting
             if updateTrigger["TriggerStatus"] == 2:               
                 self._trigger_state = "ON"
-                self.triggerStateChanged.emit("ON")            
+                self.triggerStateChanged.emit()            
                 return trigger_setting or {}
        
         self._trigger_state = "OFF"
-        self.triggerStateChanged.emit("OFF")
+        self.triggerStateChanged.emit()
                 
         return trigger_setting or {}
     
@@ -407,27 +407,17 @@ class MOTIONConnector(QObject):
     def startTrigger(self):
         success = motion_interface.console_module.start_trigger()
         if success:
-
-            # Start status thread
-            if self._console_status_thread is None:
-                self._console_status_thread = ConsoleStatusThread(self)
-                self._console_status_thread.statusUpdate.connect(self.handleUpdateCapStatus)  # Or define a dedicated signal
-                self._console_status_thread.start()
-
             self._trigger_state = "ON"
-            self.triggerStateChanged.emit("ON")
+            self.triggerStateChanged.emit()
+            logger.info("Trigger started successfully.")
         return success
         
     @pyqtSlot()
     def stopTrigger(self):
         motion_interface.console_module.stop_trigger()
         self._trigger_state = "OFF"
-        self.triggerStateChanged.emit("OFF")        
-        
-        if self._console_status_thread:
-            self._console_status_thread.stop()
-            self._console_status_thread = None
-    
+        self.triggerStateChanged.emit()        
+        logger.info("Trigger stopped.")   
     
     @pyqtSlot(str)
     def querySensorAccelerometer (self, target: str):

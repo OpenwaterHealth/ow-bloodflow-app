@@ -20,14 +20,39 @@ QtObject {
     signal messageOut(string text)
     signal scanFinished(bool ok, string error, string leftPath, string rightPath)
 
+    // internal
+    property string _stage: "idle"
+    property bool _done: false
+    function _finish(ok, err, l, r) {
+        if (_done) return
+        _done = true
+        scanFinished(ok, err || "", l || "", r || "")
+        _stage = "idle"
+    }
+
     property FlashSensorsTask flashTask: FlashSensorsTask {
         connector: runner.connector
         cameraMask: runner.cameraMask
-        onStarted: stageUpdate("Configuring sensors/FPGA…")
+
+        property var _wd: null
+
+        onStarted: {
+            runner._stage = "flash"
+            stageUpdate("Configuring sensors/FPGA…")
+            // watchdog ~70s (your log showed ~50s)
+            if (_wd) try { _wd.stop() } catch(e) {}
+            _wd = Qt.createQmlObject('import QtQuick 6.5; Timer { interval: 70000; repeat: false }', flashTask, "flashWD")
+            _wd.triggered.connect(function() {
+                messageOut("Flash step timed out.")
+                runner._finish(false, "Flash step timed out", "", "")
+            })
+            _wd.start()
+        }
         onProgress: function(pct) { progressUpdate(pct) }
         onLog: function(line) { messageOut(line) }
         onFinished: function(ok, err) {
-            if (!ok) { scanFinished(false, err, "", ""); return }
+            if (_wd) { try { _wd.stop() } catch(e) {} _wd = null }
+            if (!ok) { runner._finish(false, err, "", ""); return }
             setTask.run()
         }
     }
@@ -36,11 +61,26 @@ QtObject {
         connector: runner.connector
         laserOn: runner.laserOn
         triggerConfig: runner.triggerConfig
-        onStarted: stageUpdate("Setting trigger & laser…")
+
+        property var _wd: null
+
+        onStarted: {
+            runner._stage = "set"
+            stageUpdate("Setting trigger & laser…")
+            // watchdog 5s (quick sync calls)
+            if (_wd) try { _wd.stop() } catch(e) {}
+            _wd = Qt.createQmlObject('import QtQuick 6.5; Timer { interval: 5000; repeat: false }', setTask, "setWD")
+            _wd.triggered.connect(function() {
+                messageOut("SetTrigger/Laser step timed out.")
+                runner._finish(false, "SetTrigger/Laser step timed out", "", "")
+            })
+            _wd.start()
+        }
         onProgress: function(pct) { progressUpdate(pct) }
         onLog: function(line) { messageOut(line) }
         onFinished: function(ok, err) {
-            if (!ok) { scanFinished(false, err, "", ""); return }
+            if (_wd) { try { _wd.stop() } catch(e) {} _wd = null }
+            if (!ok) { runner._finish(false, err, "", ""); return }
             capTask.run()
         }
     }
@@ -52,32 +92,38 @@ QtObject {
         subjectId: runner.subjectId
         dataDir: runner.dataDir
         disableLaser: runner.disableLaser
-        onStarted: stageUpdate("Capturing…")
+        onStarted: {
+            runner._stage = "capture"
+            stageUpdate("Capturing…")
+        }
         onProgress: function(pct) { progressUpdate(pct) }
         onLog: function(line) { messageOut(line) }
         onFinished: function(ok, err) {
-            scanFinished(ok, err, ok ? leftPath : "", ok ? rightPath : "")
+            runner._finish(ok, err, ok ? leftPath : "", ok ? rightPath : "")
         }
     }
 
     function start() {
-        console.log("Start Scan runner");
-        stageUpdate("Preparing…");
-        progressUpdate(1);
-        messageOut("ScanRunner: start()");
-        flashTask.run();
+        if (runner._stage !== "idle") {
+            messageOut("Scan already running, ignoring start()")
+            return
+        }
+        _done = false
+        progressUpdate(1)
+        stageUpdate("Preparing…")
+        messageOut("ScanRunner: start()")
+        flashTask.run()
     }
 
     function cancel() {
-        // stop flash, if your connector supports it
-        if (connector && connector.cancelConfigureCameraSensors) {
+        // stop flash (async worker) if running
+        if (runner._stage === "flash" && connector && connector.cancelConfigureCameraSensors) {
             try { connector.cancelConfigureCameraSensors() } catch(e) {}
         }
-        // stop trigger if capture running
+        // stop capture trigger if running
         if (connector && connector.stopTrigger) {
             try { connector.stopTrigger() } catch(e) {}
         }
-        // tell the UI we're done (not ok)
-        scanFinished(false, "Canceled", "", "")
+        runner._finish(false, "Canceled", "", "")
     }
 }
