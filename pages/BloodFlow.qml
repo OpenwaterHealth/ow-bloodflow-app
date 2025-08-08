@@ -634,8 +634,13 @@ Rectangle {
         }
         onMessageOut: function(line) { scanDialog.appendLog(line) }
         onScanFinished: function(ok, err, left, right) {
-            if (!ok) scanDialog.appendLog("ERROR: " + err)
-            scanDialog.close()   // <— closes even on error or cancel
+            if (!ok) {
+                scanDialog.appendLog("ERROR: " + err);
+                scanDialog.stageText = "Error during capture";
+                // keep it open so you can read the error
+                return;
+            }
+            scanDialog.close();
         }
     }
 }

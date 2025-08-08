@@ -18,34 +18,55 @@ QtObject {
     signal log(string line)
     signal finished(bool ok, string error)
 
+    property var _onLog: null
+    property var _onProg: null
+    property var _onDone: null
+
     function run() {
-        if (!connector) { finished(false, "No connector"); return }
+        if (!connector || !connector.startCapture) {
+            finished(false, "Connector missing startCapture()")
+            return
+        }
         started()
         progress(25)
-        log("Capturing data… (" + durationSec + "s)")
+        log("Preparing capture…")
 
-        const onLog = (s)=> log(s)
-        const onProg = (p)=> progress(Math.max(25, p))
-        const onDone = (l, r)=> { leftPath = l; rightPath = r; cleanup(); finished(true, "") }
-        const onErr = (msg)=> { cleanup(); finished(false, msg) }
-        const onCancel = ()=> { cleanup(); finished(false, "Capture canceled") }
+        // hook signals
+        _onLog = function(s) { log(s) }
+        _onProg = function(p) { progress(Math.max(25, p)) }
+        _onDone = function(ok, err, left, right) {
+            // cleanup
+            try { connector.captureLog.disconnect(_onLog) } catch(e) {}
+            try { connector.captureProgress.disconnect(_onProg) } catch(e) {}
+            try { connector.captureFinished.disconnect(_onDone) } catch(e) {}
 
-        function cleanup(){
-            if (connector.log.connected(onLog)) connector.log.disconnect(onLog)
-            if (connector.captureProgress.connected(onProg)) connector.captureProgress.disconnect(onProg)
-            if (connector.captureFinished.connected(onDone)) connector.captureFinished.disconnect(onDone)
-            if (connector.captureError.connected(onErr)) connector.captureError.disconnect(onErr)
-            if (connector.captureCanceled.connected(onCancel)) connector.captureCanceled.disconnect(onCancel)
+            leftPath = left || ""
+            rightPath = right || ""
+            finished(ok, err || "")
         }
 
-        connector.log.connect(onLog)
-        connector.captureProgress.connect(onProg)
-        connector.captureFinished.connect(onDone)
-        connector.captureError.connect(onErr)
-        connector.captureCanceled.connect(onCancel)
+        connector.captureLog.connect(_onLog)
+        connector.captureProgress.connect(_onProg)
+        connector.captureFinished.connect(_onDone)
 
-        connector.startCapture(cameraMask, durationSec, subjectId, dataDir, disableLaser)
+        // kick off async capture
+        var startedOk = false
+        try {
+            startedOk = connector.startCapture(subjectId, durationSec, cameraMask, dataDir, disableLaser)
+        } catch(e) {}
+        if (!startedOk) {
+            // cleanup if start failed
+            try { connector.captureLog.disconnect(_onLog) } catch(e) {}
+            try { connector.captureProgress.disconnect(_onProg) } catch(e) {}
+            try { connector.captureFinished.disconnect(_onDone) } catch(e) {}
+            finished(false, "startCapture failed to start")
+        }
     }
 
-    function cancel() { if (connector) connector.cancelCapture() }
+    function cancel() {
+        if (connector && connector.stopCapture) {
+            try { connector.stopCapture() } catch(e) {}
+        }
+        // finished(false, "Capture canceled") will be emitted by connector via captureFinished
+    }
 }

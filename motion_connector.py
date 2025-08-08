@@ -2,6 +2,8 @@ from PyQt6.QtCore import QObject, pyqtSignal, pyqtProperty, pyqtSlot, QVariant, 
 from typing import List
 import logging
 import base58
+import threading
+import queue
 import json
 import csv
 import os
@@ -51,6 +53,11 @@ class MOTIONConnector(QObject):
     configLog = pyqtSignal(str)
     configFinished = pyqtSignal(bool, str)
 
+    # capture signals
+    captureProgress = pyqtSignal(int)                       # 0..100
+    captureLog = pyqtSignal(str)                            # log lines
+    captureFinished = pyqtSignal(bool, str, str, str)       # ok, error, leftPath, rightPath
+
     def __init__(self, config_dir="config", parent=None):
         super().__init__(parent)
         self._interface = motion_interface
@@ -68,6 +75,12 @@ class MOTIONConnector(QObject):
         self._trigger_state = "OFF"
         self._state = DISCONNECTED
         self.laser_params = self._load_laser_params(config_dir)
+
+        self._capture_thread = None
+        self._capture_stop = threading.Event()
+        self._capture_running = False
+        self._capture_left_path = ""
+        self._capture_right_path = ""
 
         self.connect_signals()
 
@@ -110,7 +123,21 @@ class MOTIONConnector(QObject):
         except json.JSONDecodeError as e:
             logger.error(f"[Connector] Invalid JSON in {config_path}: {e}")
             return []
-
+        
+    def _write_stream_to_file(self, q: queue.Queue, stop_evt: threading.Event, filename: str):
+        try:
+            with open(filename, "wb") as f:
+                while not stop_evt.is_set() or not q.empty():
+                    try:
+                        data = q.get(timeout=0.100)
+                        if data:
+                            f.write(data)
+                        q.task_done()
+                    except queue.Empty:
+                        continue
+        except Exception as e:
+            self.captureLog.emit(f"Writer error ({filename}): {e}")
+            
     def set_laser_power_from_config(self, interface):
         logger.info("[Connector] Setting laser power from config...")
         for idx, laser_param in enumerate(self.laser_params, start=1):
@@ -593,6 +620,175 @@ class MOTIONConnector(QObject):
         if self._console_status_thread:
             self._console_status_thread.stop()
             self._console_status_thread = None
+
+    @pyqtSlot(str, int, int, str, bool, result=bool)
+    def startCapture(self, subject_id: str, duration_sec: int, camera_mask: int, data_dir: str, disable_laser: bool) -> bool:
+        """Start capture asynchronously; returns True if kicked off."""
+        logger.info(
+            f"startCapture(subject_id={subject_id}, dur={duration_sec}s, mask=0x{camera_mask:02X}, dir={data_dir}, disable_laser={disable_laser})"
+        )
+
+        if self._capture_running or self._capture_thread is not None:
+            self.captureLog.emit("Capture already running.")
+            return False
+
+        # sanitize/prepare
+        try:
+            os.makedirs(data_dir, exist_ok=True)
+        except Exception as e:
+            self.captureLog.emit(f"Failed to create data dir: {e}")
+            return False
+
+        logger.info("Capture worker thread starting…")
+        self._capture_stop = threading.Event()
+        self._capture_running = True
+        self._capture_left_path = ""
+        self._capture_right_path = ""
+
+        def _worker():
+            ok = False
+            err = ""
+            left_path = ""
+            right_path = ""
+
+            try:
+                interface = self._interface
+                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                self.captureLog.emit("Preparing capture…")
+
+                # Frame sync choice
+                if not disable_laser:
+                    self.captureLog.emit("Enabling external frame sync…")
+                    results = interface.run_on_sensors("enable_camera_fsin_ext")
+                    if isinstance(results, dict):
+                        for side, success in results.items():
+                            if not success:
+                                err = f"Failed to enable external frame sync on {side}."
+                                self.captureLog.emit(err); raise RuntimeError(err)
+                    else:
+                        self.captureLog.emit("enable_camera_fsin_ext returned unexpected result")
+
+                # Enable cameras
+                self.captureLog.emit("Enabling cameras…")
+                results = interface.run_on_sensors("enable_camera", camera_mask)
+                if isinstance(results, dict):
+                    for side, success in results.items():
+                        if not success:
+                            err = f"Failed to enable camera on {side}."
+                            self.captureLog.emit(err); raise RuntimeError(err)
+
+                # Setup streaming per connected sensor
+                qmap = {}
+                writer_threads = {}
+                writer_stops = {}
+                expected_size = 32833  # TODO: adjust if mask implies different payload size
+
+                for side in ("left", "right"):
+                    sensor = interface.sensors.get(side)
+                    if sensor and sensor.is_connected():
+                        q = queue.Queue()
+                        stop_evt = threading.Event()
+                        # start device streaming into queue
+                        sensor.uart.histo.start_streaming(q, expected_size=expected_size)
+
+                        filename = f"scan_{subject_id}_{ts}_{side}_mask{camera_mask:02X}.raw"
+                        filepath = os.path.join(data_dir, filename)
+                        t = threading.Thread(target=self._write_stream_to_file, args=(q, stop_evt, filepath), daemon=True)
+                        t.start()
+
+                        qmap[side] = q
+                        writer_threads[side] = t
+                        writer_stops[side] = stop_evt
+                        if side == "left": left_path = filepath
+                        if side == "right": right_path = filepath
+                        self.captureLog.emit(f"[{side.upper()}] Streaming to: {filename}")
+
+                self._capture_left_path = left_path
+                self._capture_right_path = right_path
+
+                # Start trigger
+                self.captureLog.emit("Starting trigger…")
+                if not interface.console_module.start_trigger():
+                    err = "Failed to start trigger."
+                    self.captureLog.emit(err); raise RuntimeError(err)
+                self._trigger_state = "ON"; self.triggerStateChanged.emit()
+
+                # Progress loop
+                start_t = time.time()
+                last_emit = -1
+                while not self._capture_stop.is_set():
+                    elapsed = time.time() - start_t
+                    pct = int(min(100, max(0, (elapsed / max(1, duration_sec)) * 100)))
+                    if pct != last_emit:
+                        self.captureProgress.emit(pct if pct >= 1 else 1)
+                        last_emit = pct
+                    if elapsed >= duration_sec:
+                        break
+                    time.sleep(0.2)
+
+                # Stop trigger
+                self.captureLog.emit("Stopping trigger…")
+                try:
+                    interface.console_module.stop_trigger()
+                finally:
+                    self._trigger_state = "OFF"; self.triggerStateChanged.emit()
+
+                # Disable cameras
+                self.captureLog.emit("Disabling cameras…")
+                results = interface.run_on_sensors("disable_camera", camera_mask)
+                if isinstance(results, dict):
+                    for side, success in results.items():
+                        if not success:
+                            self.captureLog.emit(f"Failed to disable camera on {side}.")
+
+                # Stop sensor streaming
+                for side in ("left", "right"):
+                    sensor = interface.sensors.get(side)
+                    if sensor:
+                        try:
+                            sensor.uart.histo.stop_streaming()
+                        except Exception as e:
+                            self.captureLog.emit(f"stop_streaming[{side}] error: {e}")
+
+                # Stop writer threads
+                for side, stop_evt in writer_stops.items():
+                    stop_evt.set()
+                for side, t in writer_threads.items():
+                    t.join(timeout=5.0)
+
+                ok = not self._capture_stop.is_set()
+                if ok:
+                    self.captureLog.emit("Capture session complete.")
+                else:
+                    err = "Capture canceled"
+
+            except Exception as e:
+                err = str(e)
+                self.captureLog.emit(f"Capture error: {err}")
+                ok = False
+            finally:
+                self._capture_running = False
+                self._capture_thread = None
+                self.captureFinished.emit(ok, err, left_path, right_path)
+
+        # launch worker
+        self._capture_thread = threading.Thread(target=_worker, daemon=True)
+        self._capture_thread.start()
+        return True
+
+    @pyqtSlot()
+    def stopCapture(self):
+        """Request capture cancellation."""
+        if not self._capture_running:
+            return
+        self.captureLog.emit("Cancel requested.")
+        self._capture_stop.set()
+        # also stop trigger ASAP
+        try:
+            self._interface.console_module.stop_trigger()
+            self._trigger_state = "OFF"; self.triggerStateChanged.emit()
+        except Exception:
+            pass
 
 
 # --- worker to run config off the GUI thread ---
