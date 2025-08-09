@@ -16,6 +16,7 @@ import string
 
 from motion_singleton import motion_interface  
 from processing.data_processing import DataProcessor 
+from utils.resource_path import resource_path
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)  # or INFO depending on what you want to see
@@ -129,7 +130,12 @@ class MOTIONConnector(QObject):
         self.update_state()
 
     def _load_laser_params(self, config_dir):
-        config_path = os.path.join(config_dir, "laser_params.json")
+        
+        config_path = resource_path("config", "laser_params.json") if config_dir == "config" else Path(config_dir) / "laser_params.json"
+        if not config_path.exists():
+            logger.error(f"[Connector] Laser parameter file not found: {config_path}")
+            return []  
+        
         try:
             with open(config_path, "r") as f:
                 params = json.load(f)

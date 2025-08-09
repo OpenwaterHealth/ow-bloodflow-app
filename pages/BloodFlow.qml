@@ -16,8 +16,17 @@ Rectangle {
     radius: 20
     opacity: 0.95 // Slight transparency for the content area
 
+    property bool advancedSensors: (AppFlags && AppFlags.advancedSensors) ? AppFlags.advancedSensors : false
     // property to store selected directory
     property string defaultDataDir: ""
+
+    ListModel {
+        id: sensorPatterns
+        ListElement { name: "Default"; maskHex: "0x5A" }
+        ListElement { name: "Middle";  maskHex: "0x66" } 
+        ListElement { name: "Far";  maskHex: "0x55" }  
+        ListElement { name: "Outer";  maskHex: "0x99" }  
+    }
 
     // Convert sensorActive[0..7] -> bitmask using mapping: [0,7,1,6,2,5,3,4]
     function maskFromArray(arr) {
@@ -253,12 +262,15 @@ Rectangle {
                             id: leftSensorSelector
                             Layout.preferredWidth: 200
                             Layout.preferredHeight: 40
-                            model: ["Default"] // ,"Middle"
+                            model: advancedSensors ? sensorPatterns : [ sensorPatterns.get(0).name ]
+                            textRole: advancedSensors ? "name" : ""
 
                             onCurrentIndexChanged: {
                                 switch (currentIndex) {
                                     case 0: leftSensorView.sensorActive = [false,false,true,true,false,false,true,true]; break;  // 0x5A
                                     case 1: leftSensorView.sensorActive = [false,false,true,true,true,true,false,false]; break;  // 0x66
+                                    case 2: leftSensorView.sensorActive = [true,true,false,false,true,true,false,false]; break;  // 0x55
+                                    case 3: leftSensorView.sensorActive = [true,true,false,false,false,false,true,true]; break;  // 0x99
                                 }
                             }
                         }
@@ -278,12 +290,15 @@ Rectangle {
                             id: rightSensorSelector
                             Layout.preferredWidth: 200
                             Layout.preferredHeight: 40
-                            model: ["Default"] // ,"Middle"
+                            model: advancedSensors ? sensorPatterns : [ sensorPatterns.get(0).name ]
+                            textRole: advancedSensors ? "name" : ""
 
                             onCurrentIndexChanged: {
                                 switch (currentIndex) {
                                     case 0: rightSensorView.sensorActive = [false,false,true,true,false,false,true,true]; break;  // 0x5A
                                     case 1: rightSensorView.sensorActive = [false,false,true,true,true,true,false,false]; break;  // 0x66
+                                    case 2: rightSensorView.sensorActive = [true,true,false,false,true,true,false,false]; break;  // 0x55
+                                    case 3: rightSensorView.sensorActive = [true,true,false,false,false,false,true,true]; break;  // 0x99
                                 }                                
                             }
                         }
@@ -471,7 +486,7 @@ Rectangle {
 
                         Slider {
                             id: durationSlider
-                            from: 0
+                            from: 16
                             to: 120
                             stepSize: 1
                             snapMode: Slider.SnapOnRelease

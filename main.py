@@ -1,6 +1,7 @@
 import sys
 import os
 import asyncio
+import argparse
 import warnings
 import logging
 
@@ -26,8 +27,12 @@ def main():
     os.environ["QT_QUICK_CONTROLS_STYLE"] = "Material"
     os.environ["QT_QUICK_CONTROLS_MATERIAL_THEME"] = "Dark"
     os.environ["QT_LOGGING_RULES"] = "qt.qpa.fonts=false"
+    # --- parse flags ignore unknown (Qt) flags ---
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--advanced-sensors", action="store_true")
+    my_args, _unknown = parser.parse_known_args(sys.argv[1:])
 
-    app = QApplication(sys.argv)                  # <-- was QGuiApplication
+    app = QApplication(sys.argv) 
 
     # Set the global application icon
     app.setWindowIcon(QIcon("assets/images/favicon.png"))
@@ -36,7 +41,10 @@ def main():
     # Expose to QML
     connector = MOTIONConnector()
     qmlRegisterSingletonInstance("OpenMotion", 1, 0, "MOTIONInterface", connector)
-    engine.rootContext().setContextProperty("appVersion", "0.3.0")
+    engine.rootContext().setContextProperty("AppFlags", {
+        "advancedSensors": my_args.advanced_sensors
+    })
+    engine.rootContext().setContextProperty("appVersion", "0.3.1")
 
     # Load the QML file
     engine.load(resource_path("main.qml"))
