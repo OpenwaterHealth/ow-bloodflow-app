@@ -3,15 +3,13 @@ import os
 import asyncio
 import warnings
 import logging
-from PyQt6.QtGui import QGuiApplication, QIcon
+
+from PyQt6.QtGui import QIcon
+from PyQt6.QtWidgets import QApplication          # <-- use QApplication
 from PyQt6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
 from qasync import QEventLoop
 
 from motion_connector import MOTIONConnector
-
-
-# set PYTHONPATH=%cd%\..\OpenMOTION-PyLib;%PYTHONPATH%
-# python main.py
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.ERROR)  # or INFO depending on what you want to see
@@ -24,24 +22,19 @@ def main():
     os.environ["QT_QUICK_CONTROLS_MATERIAL_THEME"] = "Dark"
     os.environ["QT_LOGGING_RULES"] = "qt.qpa.fonts=false"
 
-    app = QGuiApplication(sys.argv)
+    app = QApplication(sys.argv)                  # <-- was QGuiApplication
 
     # Set the global application icon
     app.setWindowIcon(QIcon("assets/images/favicon.png"))
     engine = QQmlApplicationEngine()
 
-    # Initialize LIFUConnector with hv_test_mode from command-line argument
-    # motion_connector = MOTIONConnector()
-
     # Expose to QML
     connector = MOTIONConnector()
     qmlRegisterSingletonInstance("OpenMotion", 1, 0, "MOTIONInterface", connector)
-    engine.rootContext().setContextProperty("appVersion", "0.2.0")
-
+    engine.rootContext().setContextProperty("appVersion", "0.3.0")
 
     # Load the QML file
     engine.load("main.qml")
-
     if not engine.rootObjects():
         print("Error: Failed to load QML file")
         sys.exit(-1)
@@ -49,14 +42,11 @@ def main():
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)
 
-
     async def main_async():
-        """Start MOTION monitoring before event loop runs."""
         logger.info("Starting MOTION monitoring...")
         await connector._interface.start_monitoring()
 
     async def shutdown():
-        """Ensure MOTIONConnector stops monitoring before closing."""
         logger.info("Shutting down MOTION monitoring...")
         connector._interface.stop_monitoring()
 
@@ -70,24 +60,18 @@ def main():
         logger.info("LIFU monitoring stopped. Application shutting down.")
 
     def handle_exit():
-        """Ensure QML cleans up before Python exit without blocking."""
         logger.info("Application closing...")
-
-        # Schedule shutdown but do NOT block the loop
         asyncio.ensure_future(shutdown()).add_done_callback(lambda _: loop.stop())
-        
         engine.deleteLater()  # Ensure QML engine is destroyed
 
-    # Connect shutdown process to app quit event
     app.aboutToQuit.connect(handle_exit)
-    
+
     try:
         with loop:
             loop.run_until_complete(main_async())
             loop.run_forever()
     except RuntimeError as e:
         if "Event loop stopped before Future completed" in str(e):
-            # Graceful shutdown — expected if closing while a future is active
             logger.warning("App closed while a Future was still running (safe to ignore)")
         else:
             logger.error(f"Runtime error: {e}")

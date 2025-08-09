@@ -51,6 +51,9 @@ class MOTIONConnector(QObject):
     accelerometerSensorUpdated = pyqtSignal(float, float, float)  # (x, y, z)
     gyroscopeSensorUpdated = pyqtSignal(float, float, float)  # (x, y, z)
     rgbStateReceived = pyqtSignal(int, str)  # (state, state_text)
+    errorOccurred = pyqtSignal(str)
+    vizFinished = pyqtSignal()
+    visualizingChanged = pyqtSignal(bool)  
 
     configProgress = pyqtSignal(int)
     configLog = pyqtSignal(str)
@@ -95,6 +98,9 @@ class MOTIONConnector(QObject):
         self._capture_right_path = ""
         self._scan_notes = ""  
         self.connect_signals()
+        self._viz_thread = None
+        self._viz_worker = None
+
 
         default_dir = os.path.join(os.getcwd(), "scan_data")
         os.makedirs(default_dir, exist_ok=True)
@@ -970,6 +976,117 @@ class MOTIONConnector(QObject):
         except Exception:
             pass
 
+    @pyqtSlot(str, str, float, float, result=bool)
+    def visualize_bloodflow(self, left_csv: str, right_csv: str, t1: float = 0.0, t2: float = 120.0) -> bool:
+        left_csv  = (left_csv or "").strip()
+        right_csv = (right_csv or "").strip()
+        if left_csv.lower().endswith(".raw"):  left_csv  = left_csv[:-4]  + ".csv"
+        if right_csv.lower().endswith(".raw"): right_csv = right_csv[:-4] + ".csv"
+
+        if not left_csv and not right_csv:
+            self.errorOccurred.emit("No files selected. Please pick a left and/or right CSV.")
+            return False
+
+        missing = []
+        if left_csv and not Path(left_csv).exists():   missing.append(f"Left file not found:\n{left_csv}")
+        if right_csv and not Path(right_csv).exists(): missing.append(f"Right file not found:\n{right_csv}")
+        if missing:
+            self.errorOccurred.emit("\n\n".join(missing))
+            return False
+
+        logger.info(f"Visualizing bloodflow: left_csv={left_csv}, right_csv={right_csv}, t1={t1}, t2={t2}")
+
+        # start spinner
+        self.visualizingChanged.emit(True)
+
+        # start worker thread (compute only)
+        self._viz_thread = QThread(self)
+        self._viz_worker = _VizWorker(left_csv, right_csv, t1, t2)
+        self._viz_worker.moveToThread(self._viz_thread)
+
+        # --- connections when starting the worker ---
+        self._viz_thread.started.connect(self._viz_worker.run)
+        self._viz_worker.resultsReady.connect(self._onVizResults)  # will pass 1 arg
+        self._viz_worker.error.connect(self._onVizError)
+        self._viz_worker.finished.connect(self._viz_thread.quit)
+        self._viz_worker.finished.connect(self._viz_worker.deleteLater)
+        self._viz_thread.finished.connect(self._viz_thread.deleteLater)
+        self._viz_thread.start()
+        return True
+
+    @pyqtSlot(object)
+    def _onVizResults(self, payload: dict):
+        try:
+            import matplotlib.pyplot as plt
+            from processing.visualize_bloodflow import VisualizeBloodflow
+
+            bfi = payload["bfi"]; bvi = payload["bvi"]
+            camera_inds = payload["camera_inds"]
+            nmodules = payload["nmodules"]
+            t1 = payload["t1"]; t2 = payload["t2"]
+
+            viz = VisualizeBloodflow(left_csv="", right_csv="", t1=t1, t2=t2)
+            viz._BFI = bfi
+            viz._BVI = bvi
+            viz._camera_inds = camera_inds
+            viz._nmodules = nmodules
+
+            fig = viz.plot(("BFI", "BVI"))
+            plt.show(block=False)
+        except Exception as e:
+            self.errorOccurred.emit(f"Visualization display failed:\n{e}")
+        finally:
+            self.visualizingChanged.emit(False)
+            self.vizFinished.emit()
+
+    @pyqtSlot(str)
+    def _onVizError(self, msg: str):
+        self.visualizingChanged.emit(False)
+        self.errorOccurred.emit(f"Visualization failed:\n{msg}")
+
+    @pyqtSlot()
+    def _onVizFinished(self):
+        # Show the figure on the main thread
+        try:
+            import matplotlib.pyplot as plt
+            plt.show(block=False)
+        except Exception as e:
+            self.errorOccurred.emit(f"Visualization display failed:\n{e}")
+        finally:
+            self.visualizingChanged.emit(False)
+            self.vizFinished.emit()
+
+    @pyqtSlot(str)
+    def emitError(self, msg):
+        self.errorOccurred.emit(msg)
+
+# --- worker to run visualiztion ---
+class _VizWorker(QObject):
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
+    resultsReady = pyqtSignal(object)   # emits a dict with arrays/metadata
+
+    def __init__(self, left_csv, right_csv, t1, t2):
+        super().__init__()
+        self.left_csv = left_csv
+        self.right_csv = right_csv
+        self.t1 = t1
+        self.t2 = t2
+
+    @pyqtSlot()
+    def run(self):
+        try:
+            from processing.visualize_bloodflow import VisualizeBloodflow
+            viz = VisualizeBloodflow(self.left_csv or None, self.right_csv or None, t1=self.t1, t2=self.t2)
+            viz.compute()
+            bfi, bvi, cam_inds = viz.get_results()
+            payload = {"bfi": bfi, "bvi": bvi, "camera_inds": cam_inds,
+                       "nmodules": 2 if self.right_csv else 1,
+                       "freq": viz.frequency_hz, "t1": viz.t1, "t2": viz.t2}
+            self.resultsReady.emit(payload)
+            self.finished.emit()
+        except Exception as e:
+            self.error.emit(str(e))
 
 # --- worker to run config off the GUI thread ---
 class _ConfigureWorker(QThread):

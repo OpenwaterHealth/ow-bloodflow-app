@@ -1,6 +1,7 @@
 import QtQuick 6.0
 import QtQuick.Controls 6.0
 import QtQuick.Layouts 6.0
+import QtQuick.Dialogs as Dialogs
 import OpenMotion 1.0 
 
 Rectangle {
@@ -15,6 +16,7 @@ Rectangle {
     // UI state
     property var scans: []          // ["owABCD12_20250808_120000", ...]
     property var selected: ({})     // {subjectId,timestamp,maskHex,leftPath,rightPath,notesPath,notes}
+    property bool visualizing: false   
 
     signal requestOpenFolder(string folderPath)
 
@@ -232,32 +234,6 @@ Rectangle {
                         Text { text: "Actions"; color: "white"; font.pixelSize: 16 }
 
                         Button {
-                            id: btnPostProcess
-                            text: "Post Processing"
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 40
-                            Layout.alignment: Qt.AlignHCenter 
-                            enabled: !!(selected.leftPath || selected.rightPath)
-                            hoverEnabled: enabled          
-
-                            contentItem: Text {
-                                text: parent.text
-                                font.pixelSize: 14
-                                color: parent.enabled ? "#BDC3C7" : "#7F8C8D"
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            background: Rectangle {
-                                color: !parent.enabled ? "#3A3F4B" : parent.hovered ? "#4A90E2" : "#3A3F4B"
-                                border.color: !parent.enabled ? "#7F8C8D" : parent.hovered ? "#FFFFFF" : "#BDC3C7"
-                                radius: 4
-                            }
-                            onClicked: {
-                                console.log("Post Process", selected.leftPath, selected.rightPath)
-                            }
-                        }
-
-                        Button {
                             id: btnVisualize
                             text: "Visualize"
                             Layout.fillWidth: true
@@ -279,7 +255,14 @@ Rectangle {
                                 radius: 4
                             }
                             onClicked: {
-                                console.log("Visualize", selected.leftPath, selected.rightPath)
+                                dataAnalysis.visualizing = true
+                                const left  = selected.leftPath  || ""
+                                const right = selected.rightPath || ""
+                                const ok = MOTIONInterface.visualize_bloodflow(left, right, 0.0, 120.0)
+                                if (!ok) {
+                                    console.warn("visualize_bloodflow returned false")
+                                    dataAnalysis.visualizing = false
+                                }
                             }
                         }
 
@@ -288,6 +271,33 @@ Rectangle {
                     }
                 }
             }
+        }
+    }
+
+    // Simple error dialog
+    Dialogs.MessageDialog {
+        id: errDialog
+        title: "Visualization Error"
+        text: ""
+        visible: false
+        modality: Qt.ApplicationModal
+        onAccepted: visible = false
+    }
+    
+    Rectangle {
+        id: busyOverlay
+        anchors.fill: parent
+        color: "#000"
+        opacity: 0.45
+        visible: dataAnalysis.visualizing
+        z: 9999
+        MouseArea { anchors.fill: parent; enabled: true } // block clicks
+
+        Column {
+            anchors.centerIn: parent
+            spacing: 12
+            BusyIndicator { running: dataAnalysis.visualizing; width: 64; height: 64 }
+            Text { text: "Processing…"; color: "white"; font.pixelSize: 16 }
         }
     }
 
@@ -330,6 +340,14 @@ Rectangle {
         function onDirectoryChanged() {
             refreshScans()
         }
+
+        function onErrorOccurred(msg) {
+            dataAnalysis.visualizing = false
+            errDialog.text = msg || "Unknown error."
+            errDialog.visible = true
+        }
+        function onVisualizingChanged(b) { dataAnalysis.visualizing = b }
+        function onVizFinished() { dataAnalysis.visualizing = false }
     }
 
     Component.onCompleted: refreshScans()
