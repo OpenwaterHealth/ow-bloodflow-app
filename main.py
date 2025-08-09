@@ -10,12 +10,17 @@ from PyQt6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
 from qasync import QEventLoop
 
 from motion_connector import MOTIONConnector
-
+from pathlib import Path
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.ERROR)  # or INFO depending on what you want to see
 
 # Suppress PyQt6 DeprecationWarnings related to SIP
 warnings.simplefilter("ignore", DeprecationWarning)
+
+def resource_path(rel: str) -> str:
+    import sys, os
+    base = getattr(sys, "_MEIPASS", os.path.abspath(os.path.dirname(sys.executable if getattr(sys,"frozen",False) else __file__)))
+    return os.path.join(base, rel)
 
 def main():
     os.environ["QT_QUICK_CONTROLS_STYLE"] = "Material"
@@ -34,7 +39,8 @@ def main():
     engine.rootContext().setContextProperty("appVersion", "0.3.0")
 
     # Load the QML file
-    engine.load("main.qml")
+    engine.load(resource_path("main.qml"))
+
     if not engine.rootObjects():
         print("Error: Failed to load QML file")
         sys.exit(-1)

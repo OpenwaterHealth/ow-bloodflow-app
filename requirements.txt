@@ -1,11 +1,16 @@
 PyQt6==6.8.0
 PyQt6-sip==13.9.1
 PyQt6-Qt6==6.8.1
-PySide6==6.8.1
 PyQt6-Charts==6.8.0
 qasync==0.27.1
 base58==2.1.1
-
-# Optional tools for development and testing
+pandas==2.3.1
 pytest==7.4.0
 flake8==7.1.1
+pyserial==3.5
+crcmod==1.7
+numpy==2.2.5
+matplotlib==3.10.1
+pyusb==1.3.1
+libusb1==3.3.1
+keyboard==0.13.5

@@ -9,3 +9,8 @@ Python Application UI for OPEN Motion Bloodflow monitoring
 ### Prerequisites
 - **Python 3.9 or later**: Make sure you have Python 3.9 or later installed on your system. You can download it from the [official Python website](https://www.python.org/downloads/).
 
+
+### Build Package
+```
+powershell -ExecutionPolicy Bypass -File build_and_zip.ps1 -OpenFolder
+```
