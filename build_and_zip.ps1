@@ -3,7 +3,7 @@ param(
     [string]$SpecFile = "openwater.spec",
     [string]$AppName = "OpenWaterApp",
     [string]$Entry = "main.py",
-    [string]$CondaEnv = "omotion",
+    [string]$CondaEnv = "ow-motion",
     [switch]$OpenFolder
 )
 
