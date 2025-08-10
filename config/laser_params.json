@@ -40,5 +40,19 @@
     "i2cAddr": 65,
     "offset": 8,
     "dataToSend": [229, 32]
+  },
+  {
+    "muxIdx": 1,
+    "channel": 7,
+    "i2cAddr": 65,
+    "offset": 4,
+    "dataToSend": [110, 13, 0, 0]
+  },
+  {
+    "muxIdx": 1,
+    "channel": 6,
+    "i2cAddr": 65,
+    "offset": 4,
+    "dataToSend": [110, 13, 0, 0]
   }
 ]
