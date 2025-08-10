@@ -1,82 +1,64 @@
-# -*- mode: python ; coding: utf-8 -*-
-
+# top of spec
 import os
 from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs, collect_submodules
 
 APP_NAME = "OpenWaterApp"
 ENTRY = "main.py"
 ICON_FILE = os.path.abspath("assets/images/favicon.ico")
-if not os.path.exists(ICON_FILE):
-    raise SystemExit(f"Icon not found: {ICON_FILE}")
 
-
-# --- datas ---
 datas = []
+hidden = []
+binaries = []
+
+# --- your existing resource folders (keep what you already had) ---
 for item in ("main.qml",):
     if os.path.exists(item):
         datas.append((item, "."))
-
 for folder in ("pages", "components", "assets", "config", "processing"):
     if os.path.isdir(folder):
         datas.append((folder, folder))
 
-# --- Qt & Matplotlib ---
-hidden = []
-hidden += collect_submodules("PyQt6")
-hidden += ["qasync", "matplotlib.backends.backend_qtagg"]
-
+# --- PyQt6 (keep as before) ---
 qt_datas, qt_bins, qt_hidden = collect_all("PyQt6")
 datas += qt_datas
-hidden += qt_hidden
+binaries += qt_bins
+hidden  += qt_hidden
+hidden  += collect_submodules("PyQt6")
+hidden  += ["qasync", "matplotlib.backends.backend_qtagg"]
 
-binaries = collect_dynamic_libs("PyQt6")
+# --- ✅ add omotion explicitly ---
+om_datas, om_bins, om_hidden = collect_all("omotion")
+datas   += om_datas
+binaries += om_bins
+hidden  += om_hidden
+
+# --- force include pyserial dependency ---
+hidden += [
+    "serial",
+    "serial.tools",
+    "serial.tools.list_ports",
+    "usb",
+    "usb.core",
+    "usb.util"
+]
 
 a = Analysis(
     [ENTRY],
-    pathex=[],
+    pathex=[],                      # you can leave this empty now
     binaries=binaries,
     datas=datas,
     hiddenimports=hidden,
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=['PySide6', 'shiboken6', 'PySide2', 'PyQt5'],
+    excludes=['PySide6','shiboken6','PySide2','PyQt5'],  # avoid mixed Qt
     noarchive=False,
     optimize=0,
 )
 
 pyz = PYZ(a.pure)
 
-exe_gui = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,
-    name=APP_NAME,
-    console=False,
-    icon=ICON_FILE,       
-    upx=True,
-)
+exe_gui = EXE(pyz, a.scripts, [], exclude_binaries=True, name=APP_NAME,
+              console=False, icon=ICON_FILE, upx=True)
+exe_cli = EXE(pyz, a.scripts, [], exclude_binaries=True, name=f"{APP_NAME}_console",
+              console=True,  icon=ICON_FILE, upx=True)
 
-exe_cli = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,
-    name=f"{APP_NAME}_console",
-    console=True,
-    icon=ICON_FILE,  
-    upx=True,
-)
-
-coll = COLLECT(
-    exe_gui,
-    exe_cli,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name=APP_NAME,
-)
+coll = COLLECT(exe_gui, exe_cli, a.binaries, a.zipfiles, a.datas,
+               strip=False, upx=True, upx_exclude=[], name=APP_NAME)

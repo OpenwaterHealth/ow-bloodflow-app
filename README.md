@@ -14,3 +14,7 @@ Python Application UI for OPEN Motion Bloodflow monitoring
 ```
 powershell -ExecutionPolicy Bypass -File build_and_zip.ps1 -OpenFolder
 ```
+
+# from repo root
+Remove-Item -Recurse -Force build, dist
+python -m PyInstaller -y openwater.spec
