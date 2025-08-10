@@ -48,8 +48,8 @@ class VisualizeBloodflow:
         [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
          [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], dtype=float))
     C_max: np.ndarray = field(default_factory=lambda: np.array(
-        [[0.2, 0.2, 0.3, 0.4, 0.4, 0.3, 0.2, 0.2],
-         [0.2, 0.2, 0.3, 0.4, 0.4, 0.3, 0.2, 0.2]], dtype=float))
+        [[0.4, 0.4, 0.45, 0.55, 0.55, 0.45, 0.4, 0.4],
+         [0.4, 0.4, 0.45, 0.55, 0.55, 0.45, 0.4, 0.4]], dtype=float))
 
     # Internals (populated after compute)
     _BFI: Optional[np.ndarray] = field(default=None, init=False)
