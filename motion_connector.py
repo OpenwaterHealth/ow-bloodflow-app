@@ -1084,7 +1084,12 @@ class _VizWorker(QObject):
         try:
             from processing.visualize_bloodflow import VisualizeBloodflow
             viz = VisualizeBloodflow(self.left_csv or None, self.right_csv or None, t1=self.t1, t2=self.t2)
-            viz.compute()
+            viz.compute()       
+
+            # Save results CSV based on left_csv naming rule            
+            new_file_name = re.sub(r"_left_mask\d+\.csv$", "_bfi_results.csv", self.left_csv)
+            viz.save_results_csv(new_file_name)
+
             bfi, bvi, cam_inds = viz.get_results()
             payload = {"bfi": bfi, "bvi": bvi, "camera_inds": cam_inds,
                        "nmodules": 2 if self.right_csv else 1,

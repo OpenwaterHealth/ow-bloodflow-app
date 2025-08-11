@@ -231,6 +231,28 @@ class VisualizeBloodflow:
         """Show the current matplotlib figure."""
         plt.show()
 
+    def save_results_csv(self, path: str) -> None:
+        """Save BFI and BVI results to CSV."""
+        if self._BFI is None or self._BVI is None or self._camera_inds is None:
+            raise RuntimeError("Call compute() before saving results.")
+
+        nframes = self._BFI.shape[1]
+        time_s = np.arange(nframes, dtype=float) / self.frequency_hz
+
+        rows = []
+        for cam_idx, cam_id in enumerate(self._camera_inds):
+            for frame_idx in range(nframes):
+                rows.append({
+                    "camera": int(cam_id),
+                    "time_s": time_s[frame_idx],
+                    "BFI": self._BFI[cam_idx, frame_idx],
+                    "BVI": self._BVI[cam_idx, frame_idx],
+                })
+
+        df = pd.DataFrame(rows)
+        df.to_csv(path, index=False)
+        print(f"Saved results CSV: {path}")
+
     # --------------------------
     # Internals
     # --------------------------
@@ -306,6 +328,10 @@ def main():
         noisy_bin_min=args.noisy_bin_min,
     )
     viz.compute()
+    
+    if args.save:
+        csv_path = args.save.rsplit(".", 1)[0] + "_results.csv"
+        viz.save_results_csv(csv_path)
 
     # Plot
     fig = viz.plot(legend=('BFI', 'BVI'))
