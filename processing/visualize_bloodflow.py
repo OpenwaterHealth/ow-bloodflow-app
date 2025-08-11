@@ -68,16 +68,20 @@ class VisualizeBloodflow:
         # read first module
         histos, camera_inds, timept, temperature = self._readdata(self.left_csv)
         nmodules = 1
-        ncameras = len(camera_inds)
+        ncameras_left = len(camera_inds)
+        sides = np.array(["left"] * ncameras_left)
 
         # maybe read second module
         if self.right_csv:
             histos2, camera_inds2, timept2, temperature2 = self._readdata(self.right_csv)
             histos = np.concatenate((histos, histos2), axis=0)
             camera_inds = np.concatenate((camera_inds, camera_inds2), axis=0)
+            sides = np.concatenate((sides, np.array(["right"] * len(camera_inds2))))
             # temperature/timept not used beyond alignment
             nmodules = 2
 
+        self._sides = sides
+        
         # baseline adjust & noise floor
         histos = histos.astype(float, copy=False)
         histos[:, :, 0] -= 6
@@ -241,9 +245,11 @@ class VisualizeBloodflow:
 
         rows = []
         for cam_idx, cam_id in enumerate(self._camera_inds):
+            side = self._sides[cam_idx]
             for frame_idx in range(nframes):
                 rows.append({
                     "camera": int(cam_id),
+                    "side": side,
                     "time_s": time_s[frame_idx],
                     "BFI": self._BFI[cam_idx, frame_idx],
                     "BVI": self._BVI[cam_idx, frame_idx],
