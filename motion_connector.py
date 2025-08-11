@@ -1087,8 +1087,9 @@ class _VizWorker(QObject):
             viz.compute()       
 
             # Save results CSV based on left_csv naming rule            
-            new_file_name = re.sub(r"_left_mask\d+\.csv$", "_bfi_results.csv", self.left_csv)
+            new_file_name = re.sub(r"_left.*\.csv$", "_bfi_results.csv", self.left_csv)
             viz.save_results_csv(new_file_name)
+            logger.info(f"Results CSV saved to: {new_file_name}")
 
             bfi, bvi, cam_inds = viz.get_results()
             payload = {"bfi": bfi, "bvi": bvi, "camera_inds": cam_inds,

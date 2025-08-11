@@ -17,8 +17,8 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, field
 from typing import Optional, Tuple, List
-
-import numpy as np
+import os
+import numpy as np  
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -250,6 +250,14 @@ class VisualizeBloodflow:
                 })
 
         df = pd.DataFrame(rows)
+
+        # Sort by time then camera ID
+        df.sort_values(by=["time_s", "camera"], inplace=True, ignore_index=True)
+            
+        # Remove file if it already exists
+        if os.path.exists(path):
+            os.remove(path)
+
         df.to_csv(path, index=False)
         print(f"Saved results CSV: {path}")
 
@@ -328,7 +336,7 @@ def main():
         noisy_bin_min=args.noisy_bin_min,
     )
     viz.compute()
-    
+
     if args.save:
         csv_path = args.save.rsplit(".", 1)[0] + "_results.csv"
         viz.save_results_csv(csv_path)
