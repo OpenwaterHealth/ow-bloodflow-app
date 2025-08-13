@@ -26,6 +26,7 @@ Rectangle {
         ListElement { name: "Middle";  maskHex: "0x66" } 
         ListElement { name: "Far";  maskHex: "0x55" }  
         ListElement { name: "Outer";  maskHex: "0x99" }  
+        ListElement { name: "All";  maskHex: "0xFF" }  
     }
 
     // Convert sensorActive[0..7] -> bitmask using mapping: [0,7,1,6,2,5,3,4]
@@ -271,6 +272,7 @@ Rectangle {
                                     case 1: leftSensorView.sensorActive = [false,false,true,true,true,true,false,false]; break;  // 0x66
                                     case 2: leftSensorView.sensorActive = [true,true,false,false,true,true,false,false]; break;  // 0x55
                                     case 3: leftSensorView.sensorActive = [true,true,false,false,false,false,true,true]; break;  // 0x99
+                                    case 4: leftSensorView.sensorActive = [true,true,true,true,true,true,true,true]; break;  // 0xFF
                                 }
                             }
                         }
@@ -299,6 +301,7 @@ Rectangle {
                                     case 1: rightSensorView.sensorActive = [false,false,true,true,true,true,false,false]; break;  // 0x66
                                     case 2: rightSensorView.sensorActive = [true,true,false,false,true,true,false,false]; break;  // 0x55
                                     case 3: rightSensorView.sensorActive = [true,true,false,false,false,false,true,true]; break;  // 0x99
+                                    case 4: rightSensorView.sensorActive = [true,true,true,true,true,true,true,true]; break;  // 0xFF
                                 }                                
                             }
                         }
