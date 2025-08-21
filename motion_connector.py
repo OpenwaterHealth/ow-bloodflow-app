@@ -1125,6 +1125,7 @@ class _ConfigureWorker(QThread):
             msg = f"Programming camera FPGA at position {pos+1} (mask 0x{cam_mask_single:02X})…"
             logger.info(msg); self.log.emit(msg)
             results = self.interface.run_on_sensors("program_fpga", camera_position=cam_mask_single, manual_process=False)
+            print(results)
             if isinstance(results, dict):
                 for side, ok in results.items():
                     if not ok:

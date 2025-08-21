@@ -266,8 +266,9 @@ Rectangle {
                             id: leftSensorSelector
                             Layout.preferredWidth: 200
                             Layout.preferredHeight: 40
-                            model: advancedSensors ? sensorPatterns : [ sensorPatterns.get(0).name ]
-                            textRole: advancedSensors ? "name" : ""
+                            model: sensorPatterns
+                            textRole: "name" 
+                            enabled: advancedSensors
 
                             onCurrentIndexChanged: {
                                 switch (currentIndex) {
@@ -279,6 +280,16 @@ Rectangle {
                                     case 5: leftSensorView.sensorActive = [false,false,false,false,true,true,true,true]; break;  // 0x0F
                                     case 6: leftSensorView.sensorActive = [true,true,true,true,false,false,false,false]; break;  // 0xF0
                                     case 7: leftSensorView.sensorActive = [true,true,true,true,true,true,true,true]; break;  // 0xFF
+                                }
+                            }
+
+                            Component.onCompleted: {
+                                if (advancedSensors) {
+                                    currentIndex = 0    // default to "None"
+                                } else {
+                                    currentIndex = 1    // default to "Near"
+                                    // manually trigger case 1 if only one option
+                                    leftSensorView.sensorActive = [false,true,false,true,true,false,true,false] // 0x5A
                                 }
                             }
                         }
@@ -298,8 +309,9 @@ Rectangle {
                             id: rightSensorSelector
                             Layout.preferredWidth: 200
                             Layout.preferredHeight: 40
-                            model: advancedSensors ? sensorPatterns : [ sensorPatterns.get(0).name ]
-                            textRole: advancedSensors ? "name" : ""
+                            model: sensorPatterns
+                            textRole: "name" 
+                            enabled: advancedSensors
 
                             onCurrentIndexChanged: {
                                 switch (currentIndex) {
@@ -312,6 +324,16 @@ Rectangle {
                                     case 6: rightSensorView.sensorActive = [true,true,true,true,false,false,false,false]; break;  // 0xF0
                                     case 7: rightSensorView.sensorActive = [true,true,true,true,true,true,true,true]; break;  // 0xFF
                                 }                                
+                            }
+
+                            Component.onCompleted: {
+                                if (advancedSensors) {
+                                    currentIndex = 0    // default to "None"
+                                } else {
+                                    // manually trigger case 1 if only one option
+                                    currentIndex = 1    // default to "Near"
+                                    rightSensorView.sensorActive = [false,true,false,true,true,false,true,false] // 0x5A
+                                }
                             }
                         }
                     }
