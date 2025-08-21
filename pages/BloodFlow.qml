@@ -22,7 +22,8 @@ Rectangle {
 
     ListModel {
         id: sensorPatterns
-        ListElement { name: "Default"; maskHex: "0x5A" }
+        ListElement { name: "None"; maskHex: "0x00" }
+        ListElement { name: "Near"; maskHex: "0x5A" }
         ListElement { name: "Middle";  maskHex: "0x66" } 
         ListElement { name: "Far";  maskHex: "0x55" }  
         ListElement { name: "Outer";  maskHex: "0x99" }  
@@ -31,10 +32,10 @@ Rectangle {
         ListElement { name: "All";  maskHex: "0xFF" }  
     }
 
-    // Convert sensorActive[0..7] -> bitmask using mapping: [0,7,1,6,2,5,3,4]
+    // Convert to mask
     function maskFromArray(arr) {
         if (!arr || arr.length !== 8) return 0;
-        const bitMap = [0, 7, 1, 6, 2, 5, 3, 4];  // index i -> bit number
+        const bitMap = [7, 6, 5, 4, 3, 2, 1, 0];  // index i -> bit number
         var m = 0;
         for (var i = 0; i < 8; i++) {
             if (arr[i]) m |= (1 << bitMap[i]);
@@ -270,13 +271,14 @@ Rectangle {
 
                             onCurrentIndexChanged: {
                                 switch (currentIndex) {
-                                    case 0: leftSensorView.sensorActive = [false,false,true,true,false,false,true,true]; break;  // 0x5A
-                                    case 1: leftSensorView.sensorActive = [false,false,true,true,true,true,false,false]; break;  // 0x66
-                                    case 2: leftSensorView.sensorActive = [true,true,false,false,true,true,false,false]; break;  // 0x55
-                                    case 3: leftSensorView.sensorActive = [true,true,false,false,false,false,true,true]; break;  // 0x99
-                                    case 5: leftSensorView.sensorActive = [false,true,false,true,false,true,false,true]; break;  // 0x0F
-                                    case 4: leftSensorView.sensorActive = [true,false,true,false,true,false,true,false]; break;  // 0xF0
-                                    case 6: leftSensorView.sensorActive = [true,true,true,true,true,true,true,true]; break;  // 0xFF
+                                    case 0: leftSensorView.sensorActive = [false,false,false,false,false,false,false,false]; break;  // 0x00
+                                    case 1: leftSensorView.sensorActive = [false,true,false,true,true,false,true,false]; break;  // 0x5A
+                                    case 2: leftSensorView.sensorActive = [false,true,true,false,false,true,true,false]; break;  // 0x66
+                                    case 3: leftSensorView.sensorActive = [true,false,true,false,false,true,false,true]; break;  // 0xA5
+                                    case 4: leftSensorView.sensorActive = [true,false,false,true,true,false,false,true]; break;  // 0x99
+                                    case 5: leftSensorView.sensorActive = [false,false,false,false,true,true,true,true]; break;  // 0x0F
+                                    case 6: leftSensorView.sensorActive = [true,true,true,true,false,false,false,false]; break;  // 0xF0
+                                    case 7: leftSensorView.sensorActive = [true,true,true,true,true,true,true,true]; break;  // 0xFF
                                 }
                             }
                         }
@@ -301,13 +303,14 @@ Rectangle {
 
                             onCurrentIndexChanged: {
                                 switch (currentIndex) {
-                                    case 0: rightSensorView.sensorActive = [false,false,true,true,false,false,true,true]; break;  // 0x5A
-                                    case 1: rightSensorView.sensorActive = [false,false,true,true,true,true,false,false]; break;  // 0x66
-                                    case 2: rightSensorView.sensorActive = [true,true,false,false,true,true,false,false]; break;  // 0x55
-                                    case 3: rightSensorView.sensorActive = [true,true,false,false,false,false,true,true]; break;  // 0x99
-                                    case 5: rightSensorView.sensorActive = [false,true,false,true,false,true,false,true]; break;  // 0x0F
-                                    case 4: rightSensorView.sensorActive = [true,false,true,false,true,false,true,false]; break;  // 0xF0
-                                    case 6: rightSensorView.sensorActive = [true,true,true,true,true,true,true,true]; break;  // 0xFF
+                                    case 0: rightSensorView.sensorActive = [false,false,false,false,false,false,false,false]; break;  // 0x00
+                                    case 1: rightSensorView.sensorActive = [false,true,false,true,true,false,true,false]; break;  // 0x5A
+                                    case 2: rightSensorView.sensorActive = [false,true,true,false,false,true,true,false]; break;  // 0x66
+                                    case 3: rightSensorView.sensorActive = [true,false,true,false,false,true,false,true]; break;  // 0xA5
+                                    case 4: rightSensorView.sensorActive = [true,false,false,true,true,false,false,true]; break;  // 0x99
+                                    case 5: rightSensorView.sensorActive = [false,false,false,false,true,true,true,true]; break;  // 0x0F
+                                    case 6: rightSensorView.sensorActive = [true,true,true,true,false,false,false,false]; break;  // 0xF0
+                                    case 7: rightSensorView.sensorActive = [true,true,true,true,true,true,true,true]; break;  // 0xFF
                                 }                                
                             }
                         }

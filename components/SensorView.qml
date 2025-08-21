@@ -36,31 +36,31 @@ Rectangle {
 
             // Row 1
             Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
-                color: sensorActive[0] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
+                color: sensorActive[7] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
             Item {}
             Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
-                color: sensorActive[1] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
+                color: sensorActive[0] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
 
             // Row 2
-            Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
-                color: sensorActive[2] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
-            Item {}
-            Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
-                color: sensorActive[3] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
-
-            // Row 3
-            Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
-                color: sensorActive[4] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
-            Item {}
-            Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
-                color: sensorActive[5] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
-
-            // Row 4
             Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
                 color: sensorActive[6] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
             Item {}
             Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
-                color: sensorActive[7] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
+                color: sensorActive[1] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
+
+            // Row 3
+            Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
+                color: sensorActive[5] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
+            Item {}
+            Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
+                color: sensorActive[2] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
+
+            // Row 4
+            Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
+                color: sensorActive[4] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
+            Item {}
+            Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
+                color: sensorActive[3] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
 
             // Row 5 - Laser
             Item {}
