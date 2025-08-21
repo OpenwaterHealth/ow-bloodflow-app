@@ -71,9 +71,10 @@ class MOTIONConnector(QObject):
     postLog = pyqtSignal(str)
     postFinished = pyqtSignal(bool, str, str, str)  # ok, err, leftCsv, rightCsv
 
-    def __init__(self, config_dir="config", parent=None):
+    def __init__(self, config_dir="config", parent=None, advanced_sensors=False):
         super().__init__(parent)
         self._interface = motion_interface
+        self._advanced_sensors = advanced_sensors
 
         # Check if console and sensor are connected
         console_connected, left_sensor_connected, right_sensor_connected = motion_interface.is_device_connected()
@@ -1028,16 +1029,22 @@ class MOTIONConnector(QObject):
 
             bfi = payload["bfi"]; bvi = payload["bvi"]
             camera_inds = payload["camera_inds"]
+            contrast= payload["contrast"]; mean = payload["mean"]
             nmodules = payload["nmodules"]
             t1 = payload["t1"]; t2 = payload["t2"]
 
             viz = VisualizeBloodflow(left_csv="", right_csv="", t1=t1, t2=t2)
             viz._BFI = bfi
             viz._BVI = bvi
+            viz._contrast = contrast
+            viz._mean = mean
             viz._camera_inds = camera_inds
             viz._nmodules = nmodules
 
-            fig = viz.plot(("BFI", "BVI"))
+            if self._advanced_sensors:
+                fig = viz.plot(("contrast", "mean"))
+            else:
+                fig = viz.plot(("BFI", "BVI"))
             plt.show(block=False)
         except Exception as e:
             self.errorOccurred.emit(f"Visualization display failed:\n{e}")
@@ -1091,8 +1098,8 @@ class _VizWorker(QObject):
             viz.save_results_csv(new_file_name)
             logger.info(f"Results CSV saved to: {new_file_name}")
 
-            bfi, bvi, cam_inds = viz.get_results()
-            payload = {"bfi": bfi, "bvi": bvi, "camera_inds": cam_inds,
+            bfi, bvi, cam_inds, contrast, mean = viz.get_results()
+            payload = {"bfi": bfi, "bvi": bvi, "camera_inds": cam_inds, "contrast": contrast, "mean": mean,
                        "nmodules": 2 if self.right_csv else 1,
                        "freq": viz.frequency_hz, "t1": viz.t1, "t2": viz.t2}
             self.resultsReady.emit(payload)
