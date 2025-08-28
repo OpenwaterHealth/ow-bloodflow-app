@@ -4,7 +4,8 @@ import QtQuick 6.5
 QtObject {
     id: task
     property var connector
-    property int cameraMask: 0x03
+    property int leftCameraMask: 0x00
+    property int rightCameraMask: 0x00
     property int durationSec: 60
     property string subjectId: ""
     property string dataDir: ""
@@ -52,7 +53,7 @@ QtObject {
         // kick off async capture
         var startedOk = false
         try {
-            startedOk = connector.startCapture(subjectId, durationSec, cameraMask, dataDir, disableLaser)
+            startedOk = connector.startCapture(subjectId, durationSec, leftCameraMask, rightCameraMask, dataDir, disableLaser)
         } catch(e) {}
         if (!startedOk) {
             // cleanup if start failed

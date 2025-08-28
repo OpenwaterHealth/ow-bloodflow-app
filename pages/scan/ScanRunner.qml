@@ -7,10 +7,9 @@ QtObject {
     property var connector
 
 
-    property int leftMask: 0x00
-    property int rightMask: 0x00
+    property int leftMask: 0x5A
+    property int rightMask: 0x5A
 
-    property int cameraMask: 0x5A
     property int durationSec: 60
     property string subjectId: ""
     property string dataDir: ""
@@ -37,7 +36,8 @@ QtObject {
     // --- Flash ---
     property FlashSensorsTask flashTask: FlashSensorsTask {
         connector: runner.connector
-        cameraMask: runner.cameraMask
+        leftCameraMask: runner.leftMask
+        rightCameraMask: runner.rightMask
 
         property var _wd: null
 
@@ -94,7 +94,8 @@ QtObject {
     // --- Capture ---
     property CaptureDataTask capTask: CaptureDataTask {
         connector: runner.connector
-        cameraMask: runner.cameraMask
+        leftCameraMask: runner.leftMask
+        rightCameraMask: runner.rightMask
         durationSec: runner.durationSec
         subjectId: runner.subjectId
         dataDir: runner.dataDir

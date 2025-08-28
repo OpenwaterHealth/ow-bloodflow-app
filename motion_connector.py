@@ -609,10 +609,10 @@ class MOTIONConnector(QObject):
         self.postLog.emit("Cancel requested.")
         self._post_cancel.set()
     
-    @pyqtSlot(int)
-    def startConfigureCameraSensors(self, camera_mask:int):
+    @pyqtSlot(int, int)
+    def startConfigureCameraSensors(self, left_camera_mask:int, right_camera_mask:int):
         if self._config_thread: return
-        w = _ConfigureWorker(self._interface, camera_mask)
+        w = _ConfigureWorker(self._interface, left_camera_mask, right_camera_mask)
         w.progress.connect(self.configProgress.emit)
         w.log.connect(self.configLog.emit)
         w.finished.connect(self._on_config_finished)
@@ -628,22 +628,22 @@ class MOTIONConnector(QObject):
             self._config_thread.quit(); self._config_thread.wait(2000); self._config_thread = None
         self.configFinished.emit(ok, err)
 
-    @pyqtSlot(int, result=bool)
-    def configureCameraSensors(self, camera_mask: int) -> bool:
+    @pyqtSlot(int, int, result=bool)
+    def configureCameraSensors(self, left_camera_mask: int, right_camera_mask:int) -> bool:
         """
         Programs the FPGA on each selected camera and configures sensor registers.
-        camera_mask: bitmask over 8 camera positions (bit 0 => position 1, etc.)
+        left_camera_mask: left sensor bitmask over 8 camera positions (bit 0 => position 1, etc.)
         Returns True on full success, False if any step fails.
         """
-        logger.info(f"[Connector] configureCameraSensors called with mask=0x{camera_mask:02X}")
+        logger.info(f"[Connector] configureCameraSensors called with mask=0x{left_camera_mask:02X}")
         try:
             start_time = time.time()
             interface = self._interface  # motion_interface singleton
 
             # Turn mask into positions [0..7] (bits set)
-            camera_positions = [i for i in range(8) if (camera_mask & (1 << i))]
+            camera_positions = [i for i in range(8) if (left_camera_mask & (1 << i))]
             if not camera_positions:
-                logger.error("configureCameraSensors: camera_mask is empty (0).")
+                logger.error("configureCameraSensors: left_camera_mask is empty (0).")
                 return False
 
             for pos in camera_positions:
@@ -805,11 +805,13 @@ class MOTIONConnector(QObject):
             self._console_status_thread.stop()
             self._console_status_thread = None
 
-    @pyqtSlot(str, int, int, str, bool, result=bool)
-    def startCapture(self, subject_id: str, duration_sec: int, camera_mask: int, data_dir: str, disable_laser: bool) -> bool:
+    @pyqtSlot(str, int, int, int, str, bool, result=bool)
+    def startCapture(self, subject_id: str, duration_sec: int, left_camera_mask: int, right_camera_mask: int, data_dir: str, disable_laser: bool) -> bool:
         """Start capture asynchronously; returns True if kicked off."""
         logger.info(
-            f"startCapture(subject_id={subject_id}, dur={duration_sec}s, mask=0x{camera_mask:02X}, dir={data_dir}, disable_laser={disable_laser})"
+            f"startCapture(subject_id={subject_id}, dur={duration_sec}s, "
+            f"left_mask=0x{left_camera_mask:02X}, right_mask=0x{right_camera_mask:02X}, "
+            f"dir={data_dir}, disable_laser={disable_laser})"
         )
 
         if self._capture_running or self._capture_thread is not None:
@@ -823,11 +825,37 @@ class MOTIONConnector(QObject):
             self.captureLog.emit(f"Failed to create data dir: {e}")
             return False
 
+        # Determine which sides we will actually capture (mask != 0 and sensor connected)
+        interface = self._interface
+        sides_info = [
+            ("left",  left_camera_mask,  interface.sensors.get("left")),
+            ("right", right_camera_mask, interface.sensors.get("right")),
+        ]
+        active_sides = []
+        for side, mask, sensor in sides_info:
+            if mask == 0x00:
+                logger.info(f"{side} mask is 0x00 — skipping {side} capture.")
+                continue
+            if not (sensor and sensor.is_connected()):
+                logger.warning(f"{side} sensor not connected — skipping {side} capture.")
+                continue
+            active_sides.append((side, mask, sensor))
+
+        if not active_sides:
+            self.captureLog.emit("No active sensors to capture (both masks 0x00 or disconnected).")
+            return False
+
         logger.info("Capture worker thread starting…")
         self._capture_stop = threading.Event()
         self._capture_running = True
         self._capture_left_path = ""
         self._capture_right_path = ""
+
+        def _ok_from_result(result, side: str) -> bool:
+            # Accept either {'left': True} or a bare True
+            if isinstance(result, dict):
+                return bool(result.get(side))
+            return bool(result)
 
         def _worker():
             ok = False
@@ -836,66 +864,75 @@ class MOTIONConnector(QObject):
             right_path = ""
 
             try:
-                interface = self._interface
                 ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                logger.info("Preparing capture…")
                 self.captureLog.emit("Preparing capture…")
 
-                # Frame sync choice
+                # Frame sync only for active sides (if using external sync)
                 if not disable_laser:
+                    logger.info("Enabling external frame sync…")
                     self.captureLog.emit("Enabling external frame sync…")
-                    results = interface.run_on_sensors("enable_camera_fsin_ext")
-                    if isinstance(results, dict):
-                        for side, success in results.items():
-                            if not success:
-                                err = f"Failed to enable external frame sync on {side}."
-                                self.captureLog.emit(err); raise RuntimeError(err)
-                    else:
-                        self.captureLog.emit("enable_camera_fsin_ext returned unexpected result")
+                    for side, _, _ in active_sides:
+                        res = interface.run_on_sensors("enable_camera_fsin_ext", target=side)
+                        if not _ok_from_result(res, side):
+                            logger.error(f"Failed to enable external frame sync on {side}.")
+                            err = f"Failed to enable external frame sync on {side}."
+                            self.captureLog.emit(err)
+                            raise RuntimeError(err)
 
-                # Enable cameras
+                # Enable cameras per side with that side's mask
+                logger.info("Enabling cameras…")
                 self.captureLog.emit("Enabling cameras…")
-                results = interface.run_on_sensors("enable_camera", camera_mask)
-                if isinstance(results, dict):
-                    for side, success in results.items():
-                        if not success:
-                            err = f"Failed to enable camera on {side}."
-                            self.captureLog.emit(err); raise RuntimeError(err)
+                for side, mask, _ in active_sides:
+                    res = interface.run_on_sensors("enable_camera", mask, target=side)
+                    if not _ok_from_result(res, side):
+                        logger.error(f"Failed to enable camera on {side} (mask 0x{mask:02X}).")
+                        err = f"Failed to enable camera on {side} (mask 0x{mask:02X})."
+                        self.captureLog.emit(err)
+                        raise RuntimeError(err)
 
-                # Setup streaming per connected sensor
-                qmap = {}
-                writer_threads = {}
-                writer_stops = {}
-                expected_size = 32833  # TODO: adjust if mask implies different payload size
+                # Setup streaming per active side
+                writer_threads: dict[str, threading.Thread] = {}
+                writer_stops: dict[str, threading.Event] = {}
 
-                for side in ("left", "right"):
-                    sensor = interface.sensors.get(side)
-                    if sensor and sensor.is_connected():
-                        q = queue.Queue()
-                        stop_evt = threading.Event()
-                        # start device streaming into queue
-                        sensor.uart.histo.start_streaming(q, expected_size=expected_size)
+                # If payload size depends on enabled cameras, compute here; otherwise keep constant.
+                expected_size = 32833  # TODO: adjust if payload varies with mask
 
-                        filename = f"scan_{subject_id}_{ts}_{side}_mask{camera_mask:02X}.raw"
-                        filepath = os.path.join(data_dir, filename)
-                        t = threading.Thread(target=self._write_stream_to_file, args=(q, stop_evt, filepath), daemon=True)
-                        t.start()
+                logger.info("Setup streaming per active side")
+                for side, mask, sensor in active_sides:
+                    q = queue.Queue()
+                    stop_evt = threading.Event()
+                    # Start device streaming into queue
+                    sensor.uart.histo.start_streaming(q, expected_size=expected_size)
 
-                        qmap[side] = q
-                        writer_threads[side] = t
-                        writer_stops[side] = stop_evt
-                        if side == "left": left_path = filepath
-                        if side == "right": right_path = filepath
-                        self.captureLog.emit(f"[{side.upper()}] Streaming to: {filename}")
+                    filename = f"scan_{subject_id}_{ts}_{side}_mask{mask:02X}.raw"
+                    filepath = os.path.join(data_dir, filename)
+                    t = threading.Thread(
+                        target=self._write_stream_to_file,
+                        args=(q, stop_evt, filepath),
+                        daemon=True,
+                    )
+                    t.start()
+
+                    writer_threads[side] = t
+                    writer_stops[side] = stop_evt
+                    if side == "left":
+                        left_path = filepath
+                    elif side == "right":
+                        right_path = filepath
+                    self.captureLog.emit(f"[{side.upper()}] Streaming to: {filename}")
 
                 self._capture_left_path = left_path
                 self._capture_right_path = right_path
 
-                # Start trigger
+                # Start trigger (once)
                 self.captureLog.emit("Starting trigger…")
                 if not interface.console_module.start_trigger():
                     err = "Failed to start trigger."
-                    self.captureLog.emit(err); raise RuntimeError(err)
-                self._trigger_state = "ON"; self.triggerStateChanged.emit()
+                    self.captureLog.emit(err)
+                    raise RuntimeError(err)
+                self._trigger_state = "ON"
+                self.triggerStateChanged.emit()
 
                 # Progress loop
                 start_t = time.time()
@@ -910,31 +947,31 @@ class MOTIONConnector(QObject):
                         break
                     time.sleep(0.2)
 
-                # Stop trigger
+                # Stop trigger (once)
                 self.captureLog.emit("Stopping trigger…")
                 try:
                     interface.console_module.stop_trigger()
                 finally:
-                    self._trigger_state = "OFF"; self.triggerStateChanged.emit()
+                    self._trigger_state = "OFF"
+                    self.triggerStateChanged.emit()
 
-                # Disable cameras
+                # Disable cameras per active side
                 self.captureLog.emit("Disabling cameras…")
-                results = interface.run_on_sensors("disable_camera", camera_mask)
-                if isinstance(results, dict):
-                    for side, success in results.items():
-                        if not success:
-                            self.captureLog.emit(f"Failed to disable camera on {side}.")
+                for side, mask, _ in active_sides:
+                    res = interface.run_on_sensors("disable_camera", mask, target=side)
+                    if not _ok_from_result(res, side):
+                        self.captureLog.emit(f"Failed to disable camera on {side} (mask 0x{mask:02X}).")
 
                 # Stop sensor streaming
-                for side in ("left", "right"):
-                    sensor = interface.sensors.get(side)
+                self.captureLog.emit("Stop Sensors Streaming...")
+                for side, mask, sensor in active_sides:
                     if sensor:
                         try:
                             sensor.uart.histo.stop_streaming()
                         except Exception as e:
                             self.captureLog.emit(f"stop_streaming[{side}] error: {e}")
 
-                # Stop writer threads
+                # Stop sensor streaming & writer threads
                 for side, stop_evt in writer_stops.items():
                     stop_evt.set()
                 for side, t in writer_threads.items():
@@ -943,7 +980,7 @@ class MOTIONConnector(QObject):
                 ok = not self._capture_stop.is_set()
                 if ok:
                     self.captureLog.emit("Capture session complete.")
-                    # save notes file for the whole scan
+                    # Save notes file for the whole scan
                     try:
                         notes_filename = f"scan_{subject_id}_{ts}_notes.txt"
                         notes_path = os.path.join(data_dir, notes_filename)
@@ -1112,44 +1149,106 @@ class _ConfigureWorker(QThread):
     progress = pyqtSignal(int)
     log = pyqtSignal(str)
     finished = pyqtSignal(bool, str)
-    def __init__(self, interface, camera_mask:int):
+    def __init__(self, interface, left_camera_mask:int, right_camera_mask:int):
         super().__init__()
         self.interface = interface
-        self.camera_mask = camera_mask
+        self.left_camera_mask = left_camera_mask
+        self.right_camera_mask = right_camera_mask
         self._stop = False
     def stop(self): self._stop = True
-    def run(self):
-        import time
-        # log hex mask
-        logger.info(f"[Connector] configure worker mask=0x{self.camera_mask:02X}")
-        positions = [i for i in range(8) if (self.camera_mask & (1<<i))]
-        if not positions:
-            self.finished.emit(False, "Empty camera mask"); return
-        total= len(positions)*2; done=0
-        for pos in positions:
-            if self._stop: self.finished.emit(False,"Canceled"); return
-            cam_mask_single = 1<<pos
-            msg = f"Programming camera FPGA at position {pos+1} (mask 0x{cam_mask_single:02X})…"
-            logger.info(msg); self.log.emit(msg)
-            results = self.interface.run_on_sensors("program_fpga", camera_position=cam_mask_single, manual_process=False)
-            print(results)
-            if isinstance(results, dict):
-                for side, ok in results.items():
-                    if not ok:
-                        err=f"Failed to program FPGA on {side} sensor (pos {pos+1})."
-                        logger.error(err); self.log.emit(err); self.finished.emit(False, err); return
-            elif results is not True:
-                err=f"program_fpga unexpected: {results!r}"
-                logger.error(err); self.log.emit(err); self.finished.emit(False, err); return
-            done+=1; self.progress.emit(int(5 + (done/total)*15))
 
-            if self._stop: self.finished.emit(False,"Canceled"); return
-            msg=f"Configuring camera sensor registers at position {pos+1}…"
-            logger.info(msg); self.log.emit(msg)
-            cfg = self.interface.run_on_sensors("camera_configure_registers", camera_position=cam_mask_single)
-            if not cfg:
-                err=f"camera_configure_registers failed at position {pos+1}: {cfg!r}"
-                logger.error(err); self.log.emit(err); self.finished.emit(False, err); return
-            done+=1; self.progress.emit(int(5 + (done/total)*15))
+    def run(self):
+        # Log masks for both modules
+        logger.info(
+            f"[Connector] configure worker "
+            f"left mask=0x{self.left_camera_mask:02X} "
+            f"right mask=0x{self.right_camera_mask:02X}"
+        )
+
+        # Build (side, position) tasks based on masks
+        left_positions  = [i for i in range(8) if (self.left_camera_mask  & (1 << i))]
+        right_positions = [i for i in range(8) if (self.right_camera_mask & (1 << i))]
+
+        if not left_positions and not right_positions:
+            self.finished.emit(False, "Empty camera masks (left & right)")
+            return
+
+        tasks = [("left", p) for p in left_positions] + [("right", p) for p in right_positions]
+
+        # Each task has two steps: program_fpga and camera_configure_registers
+        total = len(tasks) * 2
+        done = 0
+
+        for side, pos in tasks:
+            if self._stop:
+                self.finished.emit(False, "Canceled")
+                return
+
+            cam_mask_single = 1 << pos
+            pos1 = pos + 1  # human-friendly position
+
+            # 1) Program FPGA
+            msg = f"Programming {side} camera FPGA at position {pos1} (mask 0x{cam_mask_single:02X})…"
+            logger.info(msg)
+            self.log.emit(msg)
+
+            results = self.interface.run_on_sensors(
+                "program_fpga",
+                camera_position=cam_mask_single,
+                manual_process=False,
+                target=side,  # <-- Only this module
+            )
+
+            # Expect a dict like {'left': True} or {'right': True}
+            if isinstance(results, dict):
+                ok = results.get(side, False)
+                if not ok:
+                    err = f"Failed to program FPGA on {side} sensor (pos {pos1})."
+                    logger.error(err)
+                    self.log.emit(err)
+                    self.finished.emit(False, err)
+                    return
+            elif results is not True:  # In case your interface returns a bare bool
+                err = f"program_fpga unexpected: {results!r}"
+                logger.error(err)
+                self.log.emit(err)
+                self.finished.emit(False, err)
+                return
+
+            done += 1
+            self.progress.emit(int(5 + (done / total) * 15))
+
+            if self._stop:
+                self.finished.emit(False, "Canceled")
+                return
+
+            # 2) Configure camera registers
+            msg = f"Configuring {side} camera sensor registers at position {pos1}…"
+            logger.info(msg)
+            self.log.emit(msg)
+
+            cfg_results = self.interface.run_on_sensors(
+                "camera_configure_registers",
+                camera_position=cam_mask_single,
+                target=side,  # <-- Only this module
+            )
+
+            # Accept dict {'left': True} or a bare True
+            cfg_ok = False
+            if isinstance(cfg_results, dict):
+                cfg_ok = bool(cfg_results.get(side))
+            else:
+                cfg_ok = bool(cfg_results)
+
+            if not cfg_ok:
+                err = f"camera_configure_registers failed on {side} at position {pos1}: {cfg_results!r}"
+                logger.error(err)
+                self.log.emit(err)
+                self.finished.emit(False, err)
+                return
+
+            done += 1
+            self.progress.emit(int(5 + (done / total) * 15))
+
         logger.info("FPGAs programmed & registers configured")
         self.finished.emit(True, "")
