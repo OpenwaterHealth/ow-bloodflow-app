@@ -4,7 +4,8 @@ import QtQuick 6.5
 QtObject {
     id: task
     property var connector
-    property int cameraMask: 0x03
+    property int leftCameraMask: 0x00
+    property int rightCameraMask: 0x00
 
     signal started()
     signal progress(int pct)
@@ -25,7 +26,7 @@ QtObject {
 
         started()
         progress(5)
-        log("Configuring sensors/FPGA… (mask=0x" + cameraMask.toString(16).toUpperCase() + ")")
+        log("Configuring sensors/FPGA… (mask=0x" + leftCameraMask.toString(16).toUpperCase() + ")")
 
         // connect temp signals
         _onLog = function(s) { log(s) }
@@ -43,6 +44,6 @@ QtObject {
         connector.configFinished.connect(_onDone)
 
         // start async; returns immediately so UI can render dialog
-        connector.startConfigureCameraSensors(cameraMask)
+        connector.startConfigureCameraSensors(leftCameraMask, rightCameraMask)
     }
 }

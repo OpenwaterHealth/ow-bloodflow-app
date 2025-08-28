@@ -55,6 +55,8 @@ class VisualizeBloodflow:
     _BFI: Optional[np.ndarray] = field(default=None, init=False)
     _BVI: Optional[np.ndarray] = field(default=None, init=False)
     _camera_inds: Optional[np.ndarray] = field(default=None, init=False)
+    _contrast: Optional[np.ndarray] = field(default=None, init=False)
+    _mean: Optional[np.ndarray] = field(default=None, init=False)
     _nmodules: int = field(default=0, init=False)
 
     # --------------------------
@@ -158,13 +160,15 @@ class VisualizeBloodflow:
         self._BFI = BFI
         self._BVI = BVI
         self._camera_inds = camera_inds
+        self._contrast = contrast
+        self._mean = mean
         self._nmodules = nmodules
 
-    def get_results(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def get_results(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Return (BFI, BVI, camera_inds). Call after compute()."""
         if self._BFI is None:
             raise RuntimeError("Call compute() before get_results().")
-        return self._BFI, self._BVI, self._camera_inds
+        return self._BFI, self._BVI, self._camera_inds, self._contrast, self._mean
 
     def plot(self, legend: Tuple[str, str] = ('BFI', 'BVI')) -> plt.Figure:
         """Create the Birmingham-style plot. Returns the matplotlib Figure."""
@@ -175,6 +179,10 @@ class VisualizeBloodflow:
         y = self._BVI
         camera_inds = self._camera_inds
         nmodules = self._nmodules
+        if legend[0] == 'contrast':
+            x = self._contrast
+        if legend[1] == 'mean':
+            y = self._mean
 
         t = np.arange(x.shape[1], dtype=float) / self.frequency_hz
         # sanitize t2
@@ -211,7 +219,7 @@ class VisualizeBloodflow:
 
                 # keep legacy inversion condition if someone passes ('contrast','mean')
                 if legend[0] == 'contrast':
-                    ax[m, 0].invert_yaxis()
+                    ax_mj.invert_yaxis()
                 if legend[1] == 'mean':
                     ax2.invert_yaxis()
 

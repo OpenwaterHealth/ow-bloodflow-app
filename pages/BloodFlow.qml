@@ -686,7 +686,7 @@ Rectangle {
         // inputs with safe fallbacks
         leftMask: bloodFlow.leftMask
         rightMask: bloodFlow.rightMask
-        cameraMask: bloodFlow.leftMask // need to issue masks for each side currently just takes one mask
+        
         durationSec: controlPanel.durationSec
         subjectId: subjectIdField.text
         dataDir: directoryField.text
