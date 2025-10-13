@@ -1021,6 +1021,80 @@ class MOTIONConnector(QObject):
         except Exception:
             pass
 
+    
+    # Fan control methods
+    @pyqtSlot(str, bool, result=bool)
+    def setFanControl(self, sensor_side: str, fan_on: bool) -> bool:
+        """
+        Set fan control for the specified sensor.
+        
+        Args:
+            sensor_side (str): "left" or "right"
+            fan_on (bool): True to turn fan ON, False to turn fan OFF
+            
+        Returns:
+            bool: True if command was sent successfully, False otherwise
+        """
+        try:
+            if sensor_side.lower() == "left":
+                if not self._leftSensorConnected:
+                    logger.error("Left sensor not connected")
+                    return False
+                result = self._interface.sensors["left"].set_fan_control(fan_on)
+            elif sensor_side.lower() == "right":
+                if not self._rightSensorConnected:
+                    logger.error("Right sensor not connected")
+                    return False
+                result = self._interface.sensors["right"].set_fan_control(fan_on)
+            else:
+                logger.error(f"Invalid sensor side: {sensor_side}")
+                return False
+                
+            if result:
+                logger.info(f"Fan control set to {'ON' if fan_on else 'OFF'} for {sensor_side} sensor")
+            else:
+                logger.error(f"Failed to set fan control for {sensor_side} sensor")
+                
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error setting fan control: {e}")
+            return False
+
+    @pyqtSlot(str, result=bool)
+    def getFanControlStatus(self, sensor_side: str) -> bool:
+        """
+        Get fan control status for the specified sensor.
+        
+        Args:
+            sensor_side (str): "left" or "right"
+            
+        Returns:
+            bool: True if fan is ON, False if fan is OFF
+        """
+        try:
+            if sensor_side.lower() == "left":
+                if not self._leftSensorConnected:
+                    logger.error("Left sensor not connected")
+                    return False
+                status = self._interface.sensors["left"].get_fan_control_status()
+            elif sensor_side.lower() == "right":
+                if not self._rightSensorConnected:
+                    logger.error("Right sensor not connected")
+                    return False
+                status = self._interface.sensors["right"].get_fan_control_status()
+            else:
+                logger.error(f"Invalid sensor side: {sensor_side}")
+                return False
+                
+            logger.info(f"Fan status for {sensor_side} sensor: {'ON' if status else 'OFF'}")
+            return status
+            
+        except Exception as e:
+            logger.error(f"Error getting fan control status: {e}")
+            return False
+
+
     @pyqtSlot(str, str, float, float, result=bool)
     def visualize_bloodflow(self, left_csv: str, right_csv: str, t1: float = 0.0, t2: float = 120.0) -> bool:
         left_csv  = (left_csv or "").strip()

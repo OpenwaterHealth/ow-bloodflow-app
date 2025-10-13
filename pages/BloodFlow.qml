@@ -260,6 +260,8 @@ Rectangle {
                         SensorView {
                             id: leftSensorView
                             title: "Left Sensor"
+                            sensorSide: "left"
+                            connector: MOTIONInterface
                         }
 
                         ComboBox {
@@ -303,6 +305,8 @@ Rectangle {
                         SensorView {
                             id: rightSensorView
                             title: "Right Sensor"
+                            sensorSide: "right"
+                            connector: MOTIONInterface
                         }
 
                         ComboBox {
