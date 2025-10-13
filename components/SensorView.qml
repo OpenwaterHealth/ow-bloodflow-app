@@ -13,7 +13,7 @@ Rectangle {
     property var connector
 
     width: 200
-    height: 300  // Increased height to accommodate fan button
+    height: 260
     radius: 10
     color: "#1E1E20"
     border.color: "#3E4E6F"
@@ -76,67 +76,63 @@ Rectangle {
             Item {}
         }
 
-        // Fan Control Button
-        Button {
-            id: fanButton
-            Layout.alignment: Qt.AlignHCenter
-            Layout.preferredWidth: 60
-            Layout.preferredHeight: 40
-            hoverEnabled: true
-            
-            // Fan icon
-            contentItem: Text {
-                text: "🌀"  // Fan emoji as fallback
-                font.pixelSize: 16
-                color: parent.enabled ? "#BDC3C7" : "#7F8C8D"
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-            }
-            
-            background: Rectangle {
-                color: parent.enabled ? 
-                    (root.fanOn ? "#4CAF50" : "#3A3F4B") :  // Green when fan is on, dark when off
-                    "#3A3F4B"
-                border.color: parent.enabled ? 
-                    (root.fanOn ? "#66BB6A" : "#BDC3C7") :  // Light green border when on, gray when off
-                    "#7F8C8D"
-                border.width: 2
-                radius: 6
-            }
-            
-            onClicked: {
-                // Toggle fan state
-                var newFanState = !root.fanOn
-                if (connector) {
-                    var success = connector.setFanControl(root.sensorSide, newFanState)
-                    if (success) {
-                        root.fanOn = newFanState
-                    } else {
-                        console.log("Failed to toggle fan for", root.sensorSide, "sensor")
-                    }
-                } else {
-                    console.log("MotionInterface not available")
-                }
-            }
-            
-            // Tooltip
-            Controls.ToolTip.visible: hovered
-            Controls.ToolTip.text: root.fanOn ? "Turn fan OFF" : "Turn fan ON"
+    }
+    
+    // Fan Control Button - positioned in top right corner
+    Button {
+        id: fanButton
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.topMargin: 5
+        anchors.rightMargin: 10
+        width: 40
+        height: 40
+        hoverEnabled: true
+        
+        // Fan icon
+        contentItem: Image {
+            source: "../assets/images/icons8-fan-30.png"
+            width: 15
+            height: 15
+            horizontalAlignment: Image.AlignHCenter
+            verticalAlignment: Image.AlignVCenter
         }
         
-        // Fan status text
-        Text {
-            text: root.fanOn ? "Fan: ON" : "Fan: OFF"
-            font.pixelSize: 12
-            color: root.fanOn ? "#4CAF50" : "#BDC3C7"
-            Layout.alignment: Qt.AlignHCenter
+        background: Rectangle {
+            color: parent.enabled ? 
+                (root.fanOn ? "#4CAF50" : "#3A3F4B") :  // Green when fan is on, dark when off
+                "#3A3F4B"
+            border.color: parent.enabled ? 
+                (root.fanOn ? "#66BB6A" : "#BDC3C7") :  // Light green border when on, gray when off
+                "#7F8C8D"
+            border.width: 2
+            radius: 10  // Circular button
         }
+        
+        onClicked: {
+            // Toggle fan state
+            var newFanState = !root.fanOn
+            if (connector) {
+                var success = connector.setFanControl(root.sensorSide, newFanState)
+                if (success) {
+                    root.fanOn = newFanState
+                } else {
+                    console.log("Failed to toggle fan for", root.sensorSide, "sensor")
+                }
+            } else {
+                console.log("MotionInterface not available")
+            }
+        }
+        
+        // Tooltip
+        Controls.ToolTip.visible: hovered
+        Controls.ToolTip.text: root.fanOn ? "Turn fan OFF" : "Turn fan ON"
     }
     
     // Initialize fan status when component loads
     Component.onCompleted: {
         if (connector) {
-            connector.getFanControlStatus(root.sensorSide)
+            root.fanOn = connector.getFanControlStatus(root.sensorSide)
         }
     }
 }
