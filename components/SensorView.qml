@@ -78,40 +78,28 @@ Rectangle {
 
     }
     
-    // Fan Control Button - positioned in top right corner
-    Button {
+    // Fan Control CheckBox - positioned in top right corner
+    CheckBox {
         id: fanButton
         anchors.top: parent.top
         anchors.right: parent.right
-        anchors.topMargin: 5
-        anchors.rightMargin: 10
-        width: 40
-        height: 40
+        anchors.topMargin: 12
+        anchors.rightMargin: 0
+        checked: root.fanOn
         hoverEnabled: true
         
-        // Fan icon
-        contentItem: Image {
+        indicator: Image {
             source: "../assets/images/icons8-fan-30.png"
-            width: 15
-            height: 15
-            horizontalAlignment: Image.AlignHCenter
-            verticalAlignment: Image.AlignVCenter
+            width: 30
+            height: 30
+            opacity: parent.checked ? 1.0 : 0.5
+            anchors.left: parent.left
+            anchors.leftMargin: 10
         }
         
-        background: Rectangle {
-            color: parent.enabled ? 
-                (root.fanOn ? "#4CAF50" : "#3A3F4B") :  // Green when fan is on, dark when off
-                "#3A3F4B"
-            border.color: parent.enabled ? 
-                (root.fanOn ? "#66BB6A" : "#BDC3C7") :  // Light green border when on, gray when off
-                "#7F8C8D"
-            border.width: 2
-            radius: 10  // Circular button
-        }
-        
-        onClicked: {
+        onToggled: {
             // Toggle fan state
-            var newFanState = !root.fanOn
+            var newFanState = checked
             if (connector) {
                 var success = connector.setFanControl(root.sensorSide, newFanState)
                 if (success) {
@@ -123,10 +111,6 @@ Rectangle {
                 console.log("MotionInterface not available")
             }
         }
-        
-        // Tooltip
-        Controls.ToolTip.visible: hovered
-        Controls.ToolTip.text: root.fanOn ? "Turn fan OFF" : "Turn fan ON"
     }
     
     // Initialize fan status when component loads
