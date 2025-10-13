@@ -954,14 +954,15 @@ class MOTIONConnector(QObject):
                 finally:
                     self._trigger_state = "OFF"
                     self.triggerStateChanged.emit()
+                time.sleep(1)
 
                 # Disable cameras per active side
                 self.captureLog.emit("Disabling cameras…")
                 for side, mask, _ in active_sides:
                     res = interface.run_on_sensors("disable_camera", mask, target=side)
+                    print( res)
                     if not _ok_from_result(res, side):
                         self.captureLog.emit(f"Failed to disable camera on {side} (mask 0x{mask:02X}).")
-
                 # Stop sensor streaming
                 self.captureLog.emit("Stop Sensors Streaming...")
                 for side, mask, sensor in active_sides:

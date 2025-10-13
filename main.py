@@ -39,10 +39,10 @@ def main():
     engine = QQmlApplicationEngine()
 
     # Expose to QML
-    connector = MOTIONConnector(advanced_sensors=my_args.advanced_sensors)
+    connector = MOTIONConnector(advanced_sensors=True)
     qmlRegisterSingletonInstance("OpenMotion", 1, 0, "MOTIONInterface", connector)
     engine.rootContext().setContextProperty("AppFlags", {
-        "advancedSensors": my_args.advanced_sensors
+        "advancedSensors": True
     })
     engine.rootContext().setContextProperty("appVersion", "0.3.5")
 

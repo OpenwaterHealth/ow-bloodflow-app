@@ -521,7 +521,7 @@ Rectangle {
                         Slider {
                             id: durationSlider
                             from: 16
-                            to: advancedSensors ? 600 : 120
+                            to: advancedSensors ? 1800 : 120
                             stepSize: 1
                             snapMode: Slider.SnapOnRelease
                             value: controlPanel.durationSec
@@ -547,7 +547,7 @@ Rectangle {
                             onEditingFinished: {
                                 let v = parseInt(text);
                                 if (isNaN(v)) v = controlPanel.durationSec;
-                                v = advancedSensors? Math.max(0, Math.min(600, v)) : Math.max(0, Math.min(120, v));
+                                v = advancedSensors? Math.max(0, Math.min(1800, v)) : Math.max(0, Math.min(120, v));
                                 controlPanel.durationSec = v;
                                 durationSlider.value = v;
                                 text = String(v);
