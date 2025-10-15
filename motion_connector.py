@@ -17,6 +17,8 @@ import string
 from motion_singleton import motion_interface  
 from processing.data_processing import DataProcessor 
 from utils.resource_path import resource_path
+import struct
+import numpy as np
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)  # or INFO depending on what you want to see
@@ -32,6 +34,156 @@ SENSOR_CONNECTED  = 1
 CONSOLE_CONNECTED = 2
 READY = 3
 RUNNING = 4
+
+# ─── Data Parsing Constants ──────────────────────────────────────────────────
+HISTO_SIZE_WORDS = 1024
+HISTO_BYTES = HISTO_SIZE_WORDS * 4  # 4096
+PACKET_HEADER_SIZE = 6
+PACKET_FOOTER_SIZE = 3
+HISTO_BLOCK_SIZE = 1 + 1 + HISTO_BYTES + 4 + 1  # SOH + cam + histo + temp + EOH
+MIN_PACKET_SIZE = PACKET_HEADER_SIZE + PACKET_FOOTER_SIZE + HISTO_BLOCK_SIZE
+
+SOF, SOH, EOH, EOF = 0xAA, 0xFF, 0xEE, 0xDD
+
+# ─── Pre-compiled struct formats ─────────────────────────────────────────────
+_U32  = struct.Struct("<I")
+_U16  = struct.Struct("<H")
+_F32  = struct.Struct("<f")
+_HDR  = struct.Struct("<BBI")          # SOF, type, length
+_BLK_HEAD = struct.Struct("<BB")       # SOH, cam_id
+
+try:
+    from omotion.utils import util_crc16 as _crc16
+except ImportError:
+    import binascii
+    def _crc16(buf: memoryview) -> int:
+        return binascii.crc_hqx(buf, 0xFFFF)
+
+# ─── Helper Functions for Packet Parsing ─────────────────────────────────────
+def _crc_matches(pkt: memoryview, crc_expected: int) -> bool:
+    """Check if CRC matches the expected value."""
+    return _crc16(pkt) == crc_expected
+
+def _parse_histogram_packet(pkt: memoryview):
+    """
+    Parse a single histogram packet from binary data.
+    Returns (histograms_dict, frame_ids_dict, temperatures_dict, bytes_consumed)
+    Raises ValueError on format errors.
+    """
+    if len(pkt) < MIN_PACKET_SIZE:
+        raise ValueError("Packet too small")
+    
+    sof, pkt_type, pkt_len = _HDR.unpack_from(pkt, 0)
+    if sof != SOF or pkt_type != 0x00:
+        raise ValueError("Bad header")
+    
+    if pkt_len > len(pkt):
+        raise ValueError("Truncated packet")
+    
+    payload_end = pkt_len - PACKET_FOOTER_SIZE
+    off = PACKET_HEADER_SIZE
+    
+    hists = {}
+    ids = {}
+    temps = {}
+    
+    while off < payload_end:
+        soh, cam_id = _BLK_HEAD.unpack_from(pkt, off)
+        if soh != SOH:
+            raise ValueError("Missing SOH")
+        off += _BLK_HEAD.size
+        
+        # Histogram as a view
+        hist = np.frombuffer(pkt, dtype=np.uint32,
+                            count=HISTO_SIZE_WORDS,
+                            offset=off)
+        off += HISTO_BYTES
+        
+        temp = _F32.unpack_from(pkt, off)[0]
+        off += 4
+        
+        if pkt[off] != EOH:
+            raise ValueError("Missing EOH")
+        off += 1
+        
+        # Extract frame ID from last word
+        last_word = hist[-1]
+        frame_id = (last_word >> 24) & 0xFF
+        hist = hist.copy()
+        hist[-1] = last_word & 0x00_FFFF_FF
+        
+        hists[cam_id] = hist
+        ids[cam_id] = frame_id
+        temps[cam_id] = temp
+    
+    # Footer
+    crc_expected = _U16.unpack_from(pkt, off)[0]
+    off += 2
+    if pkt[off] != EOF:
+        raise ValueError("Missing EOF")
+    
+    if not _crc_matches(pkt[:off-3], crc_expected):
+        raise ValueError("CRC mismatch")
+    print(f"Parsed packet: {ids}")
+    return hists, ids, temps, pkt_len
+
+def _parse_stream_to_csv(q: queue.Queue, stop_evt: threading.Event, csv_writer, buffer_accumulator: bytearray):
+    """
+    Parse streaming binary data and write to CSV.
+    This function is called to process data from the queue.
+    Returns the number of rows written.
+    """
+    rows_written = 0
+    
+    while not stop_evt.is_set() or not q.empty():
+        try:
+            queue_size_before = q.qsize()
+            data = q.get(timeout=0.100)
+            if data:
+                print(f"\nReceived {len(data)} bytes, queue had {queue_size_before} items, now has {q.qsize()}")
+                buffer_accumulator.extend(data)
+            q.task_done()
+        except queue.Empty:
+            continue
+        
+        # Try to parse packets from the accumulated buffer
+        offset = 0
+        while offset + MIN_PACKET_SIZE <= len(buffer_accumulator):
+            try:
+                pkt_view = memoryview(buffer_accumulator[offset:])
+                proc = DataProcessor()
+                hists, ids, temps, consumed = proc.parse_histogram_packet(pkt_view)
+                # hists, ids, temps, consumed = _parse_histogram_packet(pkt_view)
+                offset += consumed
+                print(f"Consumed {consumed} bytes")
+                print(f"Temperature: {temps}")
+                # Write CSV rows for each camera in this packet
+                for cam_id, hist in hists.items():
+                    row_sum = int(hist.sum(dtype=np.uint64))
+                    row = [cam_id, ids[cam_id], *hist.tolist(), temps[cam_id], row_sum]
+                    csv_writer.writerow(row)
+                    rows_written += 1
+                    print(f"Wrote row: {rows_written}")
+                    
+            except ValueError as e:
+                # Try to resync on error
+                pat = b"\xAA\x00\x41"
+                old_off = offset
+                offset += 1
+                nxt = buffer_accumulator.find(pat, offset)
+                if nxt != -1:
+                    offset = nxt
+                    logger.warning(f"Parser error, resyncing: {e}")
+                    continue
+                else:
+                    # Can't find next packet, wait for more data
+                    break
+        
+        # Remove processed data from buffer
+        if offset > 0:
+            del buffer_accumulator[:offset]
+    
+    return rows_written
 
 class MOTIONConnector(QObject):
     # Ensure signals are correctly defined
@@ -153,18 +305,30 @@ class MOTIONConnector(QObject):
             return []
         
     def _write_stream_to_file(self, q: queue.Queue, stop_evt: threading.Event, filename: str):
+        """
+        Parse streaming binary data and write to CSV file.
+        Uses the parser from parse_data_v2.py to convert binary packets to CSV rows.
+        """
         try:
-            with open(filename, "wb") as f:
-                while not stop_evt.is_set() or not q.empty():
-                    try:
-                        data = q.get(timeout=0.100)
-                        if data:
-                            f.write(data)
-                        q.task_done()
-                    except queue.Empty:
-                        continue
+            # Open CSV file for writing
+            with open(filename, "w", newline="") as f:
+                csv_writer = csv.writer(f)
+                # Write CSV header
+                csv_writer.writerow(
+                    ["cam_id", "frame_id", *range(HISTO_SIZE_WORDS), "temperature", "sum"]
+                )
+                
+                # Buffer to accumulate incoming data
+                buffer_accumulator = bytearray()
+                
+                # Parse and write data using the helper function
+                rows_written = _parse_stream_to_csv(q, stop_evt, csv_writer, buffer_accumulator)
+                
+                logger.info(f"Wrote {rows_written} rows to {filename}")
+                
         except Exception as e:
             self.captureLog.emit(f"Writer error ({filename}): {e}")
+            logger.error(f"Writer error ({filename}): {e}", exc_info=True)
             
     def set_laser_power_from_config(self, interface):
         logger.info("[Connector] Setting laser power from config...")
@@ -843,13 +1007,13 @@ class MOTIONConnector(QObject):
             return {}
 
         notes_path = base / f"scan_{scan_id}_notes.txt"
-        left  = next(base.glob(f"scan_{scan_id}_left_mask*.raw"), None)
-        right = next(base.glob(f"scan_{scan_id}_right_mask*.raw"), None)
+        left  = next(base.glob(f"scan_{scan_id}_left_mask*.csv"), None)
+        right = next(base.glob(f"scan_{scan_id}_right_mask*.csv"), None)
 
         mask = ""
         for p in (left, right):
             if p:
-                m = re.search(r"_mask([0-9A-Fa-f]+)\.raw$", p.name)
+                m = re.search(r"_mask([0-9A-Fa-f]+)\.csv$", p.name)
                 if m:
                     mask = m.group(1)
                     break
@@ -983,7 +1147,7 @@ class MOTIONConnector(QObject):
                     # Start device streaming into queue
                     sensor.uart.histo.start_streaming(q, expected_size=expected_size)
 
-                    filename = f"scan_{subject_id}_{ts}_{side}_mask{mask:02X}.raw"
+                    filename = f"scan_{subject_id}_{ts}_{side}_mask{mask:02X}.csv"
                     filepath = os.path.join(data_dir, filename)
                     t = threading.Thread(
                         target=self._write_stream_to_file,
