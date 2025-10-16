@@ -5,8 +5,13 @@ import struct
 import argparse
 import numpy as np
 from typing import Dict, Tuple, List
-import threading
 import queue
+import threading
+import logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)  # or INFO depending on what you want to see
+
 
 try:
     # Accelerated CRC implementation if available
@@ -166,7 +171,7 @@ class DataProcessor:
         total_packets = packet_ok + packet_fail + crc_failure + other_fail + bad_header_fail
         print(f"Parsed {total_packets} packets, {packet_ok} OK")
 
-    def _parse_stream_to_csv(q: queue.Queue, stop_evt: threading.Event, csv_writer, buffer_accumulator: bytearray):
+    def parse_stream_to_csv(self, q: queue.Queue, stop_evt: threading.Event, csv_writer, buffer_accumulator: bytearray):
         """
         Parse streaming binary data and write to CSV.
         This function is called to process data from the queue.
@@ -179,7 +184,6 @@ class DataProcessor:
                 queue_size_before = q.qsize()
                 data = q.get(timeout=0.100)
                 if data:
-                    print(f"\nReceived {len(data)} bytes, queue had {queue_size_before} items, now has {q.qsize()}")
                     buffer_accumulator.extend(data)
                 q.task_done()
             except queue.Empty:
@@ -190,19 +194,14 @@ class DataProcessor:
             while offset + MIN_PACKET_SIZE <= len(buffer_accumulator):
                 try:
                     pkt_view = memoryview(buffer_accumulator[offset:])
-                    proc = DataProcessor()
-                    hists, ids, temps, consumed = proc.parse_histogram_packet(pkt_view)
-                    # hists, ids, temps, consumed = _parse_histogram_packet(pkt_view)
+                    hists, ids, temps, consumed = self.parse_histogram_packet(pkt_view)
                     offset += consumed
-                    print(f"Consumed {consumed} bytes")
-                    print(f"Temperature: {temps}")
                     # Write CSV rows for each camera in this packet
                     for cam_id, hist in hists.items():
                         row_sum = int(hist.sum(dtype=np.uint64))
                         row = [cam_id, ids[cam_id], *hist.tolist(), temps[cam_id], row_sum]
                         csv_writer.writerow(row)
                         rows_written += 1
-                        print(f"Wrote row: {rows_written}")
                         
                 except ValueError as e:
                     # Try to resync on error
@@ -223,6 +222,7 @@ class DataProcessor:
                 del buffer_accumulator[:offset]
         
         return rows_written
+
     
 def main():
     parser = argparse.ArgumentParser(description="Process histogram .bin to .csv")
