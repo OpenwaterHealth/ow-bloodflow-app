@@ -85,6 +85,7 @@ class MOTIONConnector(QObject):
         self._config_thread = None
         self._laserOn = False
         self._safetyFailure = False
+        self._i2c_mutex = QMutex()
         self._running = False
         self._trigger_state = "OFF"
         self._state = DISCONNECTED
@@ -688,6 +689,7 @@ class MOTIONConnector(QObject):
     @pyqtSlot()
     def readSafetyStatus(self):
         # Replace this with your actual console status check
+        print("Reading safety status")
         try:
             muxIdx = 1
             i2cAddr = 0x41
@@ -705,21 +707,24 @@ class MOTIONConnector(QObject):
                 if status:
                     statuses[label] = status[0]                
                 else:
+                    print("I2C read error")
                     raise Exception("I2C read error")
                 
             status_text = f"SE: 0x{statuses['SE']:02X}, SO: 0x{statuses['SO']:02X}"
-            
             if (statuses["SE"] & 0x0F) == 0 and (statuses["SO"] & 0x0F) == 0:
+                logging.info(f"No laser safety failure detected")
                 if self._safetyFailure:
                     self._safetyFailure = False
                     self.safetyFailureStateChanged.emit(False)
+                    print("No laser safety failure detected")
+                    logging.info(f"No laser safety failure detected")
             else:
                 if not self._safetyFailure:
                     self._safetyFailure = True
                     self.stopTrigger()
                     self.laserStateChanged.emit(False)
                     self.safetyFailureStateChanged.emit(True)  
-                    logging.error(f"Failure Detected: {status_text}")
+                    print(f"Failure Detected: {status_text}")
 
             # Emit combined status if needed
             
@@ -727,6 +732,32 @@ class MOTIONConnector(QObject):
 
         except Exception as e:
             logging.error(f"Console status query failed: {e}")
+
+    @pyqtSlot(str, int, int, int, int, int, result=QVariant)
+    def i2cReadBytes(self, target: str, mux_idx: int, channel: int, i2c_addr: int, offset: int, data_len: int):
+        """Send i2c read to device"""
+        locker = QMutexLocker(self._i2c_mutex)  # Lock auto-released at function exit
+        try:
+            logger.info(f"I2C Read Request -> target={target}, mux_idx={mux_idx}, channel={channel}, "
+                f"i2c_addr=0x{int(i2c_addr):02X}, offset=0x{int(offset):02X}, read_len={int(data_len)}"
+            )            
+
+            if target == "CONSOLE":                
+                fpga_data, fpga_data_len = motion_interface.console_module.read_i2c_packet(mux_index=mux_idx, channel=channel, device_addr=i2c_addr, reg_addr=offset, read_len=data_len)
+                if fpga_data is None or fpga_data_len == 0:
+                    logger.error(f"Read I2C Failed")
+                    return []
+                else:
+                    logger.info(f"Read I2C Success")
+                    logger.info(f"Raw bytes: {fpga_data.hex(' ')}")  # Print as hex bytes separated by spaces
+                    return list(fpga_data[:fpga_data_len]) 
+                
+            elif target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":
+                logger.error(f"I2C Read Not Implemented")
+                return []
+        except Exception as e:
+            logger.error(f"Error sending i2c read command: {e}")
+            return []
 
     @pyqtSlot(result=list)
     def get_scan_list(self):

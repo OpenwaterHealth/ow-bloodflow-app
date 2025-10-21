@@ -468,23 +468,37 @@ Rectangle {
                             }
 
                             // Failure Indicator
-                            ColumnLayout {
-                                spacing: 4
+                            RowLayout {
+                                spacing: 6
                                 Layout.alignment: Qt.AlignHCenter
 
-                                Text {
-                                    text: "Failure"
-                                    font.pixelSize: 14
-                                    color: "#BDC3C7"
-                                    horizontalAlignment: Text.AlignHCenter
+                                ColumnLayout {
+                                    spacing: 4
                                     Layout.alignment: Qt.AlignHCenter
+
+                                    Text {
+                                        text: "Failure"
+                                        font.pixelSize: 14
+                                        color: "#BDC3C7"
+                                        horizontalAlignment: Text.AlignHCenter
+                                        Layout.alignment: Qt.AlignHCenter
+                                    }
+
+                                    Rectangle {
+                                        width: 20; height: 20; radius: 10
+                                        color: MOTIONInterface.safetyFailure ? "red" : "green"
+                                        border.color: "black"; border.width: 1
+                                        Layout.alignment: Qt.AlignHCenter
+                                    }
                                 }
 
-                                Rectangle {
-                                    width: 20; height: 20; radius: 10
-                                    color: MOTIONInterface.safetyFailure ? "red" : "grey"
-                                    border.color: "black"; border.width: 1
-                                    Layout.alignment: Qt.AlignHCenter
+                                IconSmallButton {
+                                    iconGlyph: "\ue984"  // Refresh icon
+                                    buttonText: "Refresh Safety Status"
+                                    Layout.alignment: Qt.AlignVCenter
+                                    onClicked: {
+                                        MOTIONInterface.readSafetyStatus()
+                                    }
                                 }
                             }
                         }
