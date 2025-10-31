@@ -358,9 +358,21 @@ class MOTIONConnector(QObject):
             else:
                 logger.error(f"Invalid target for sensor info query: {target}")
                 return
-            fw_version = motion_interface.sensors[sensor_tag].get_version()
+            
+            # Check if sensor is connected
+            if (sensor_tag == "left" and not self._leftSensorConnected) or \
+               (sensor_tag == "right" and not self._rightSensorConnected):
+                logger.error(f"{sensor_tag.capitalize()} sensor not connected")
+                return
+            
+            sensor = motion_interface.sensors[sensor_tag]
+            if sensor is None:
+                logger.error(f"{sensor_tag.capitalize()} sensor object is None")
+                return
+                
+            fw_version = sensor.get_version()
             logger.info(f"Version: {fw_version}")
-            hw_id = motion_interface.sensors[sensor_tag].get_hardware_id()
+            hw_id = sensor.get_hardware_id()
             device_id = base58.b58encode(bytes.fromhex(hw_id)).decode()
             self.sensorDeviceInfoReceived.emit(fw_version, device_id)
             logger.info(f"Sensor Device Info - Firmware: {fw_version}, Device ID: {device_id}")
@@ -389,7 +401,19 @@ class MOTIONConnector(QObject):
             else:
                 logger.error(f"Invalid target for sensor info query: {target}")
                 return
-            imu_temp = motion_interface.sensors[sensor_tag].imu_get_temperature()  
+            
+            # Check if sensor is connected
+            if (sensor_tag == "left" and not self._leftSensorConnected) or \
+               (sensor_tag == "right" and not self._rightSensorConnected):
+                logger.error(f"{sensor_tag.capitalize()} sensor not connected")
+                return
+            
+            sensor = motion_interface.sensors[sensor_tag]
+            if sensor is None:
+                logger.error(f"{sensor_tag.capitalize()} sensor object is None")
+                return
+                
+            imu_temp = sensor.imu_get_temperature()  
             logger.info(f"Temperature Data - IMU Temp: {imu_temp}")
             self.temperatureSensorUpdated.emit(imu_temp)
         except Exception as e:
@@ -491,7 +515,19 @@ class MOTIONConnector(QObject):
             else:
                 logger.error(f"Invalid target for sensor info query: {target}")
                 return
-            accel = motion_interface.sensors[sensor_tag].imu_get_accelerometer()
+            
+            # Check if sensor is connected
+            if (sensor_tag == "left" and not self._leftSensorConnected) or \
+               (sensor_tag == "right" and not self._rightSensorConnected):
+                logger.error(f"{sensor_tag.capitalize()} sensor not connected")
+                return
+            
+            sensor = motion_interface.sensors[sensor_tag]
+            if sensor is None:
+                logger.error(f"{sensor_tag.capitalize()} sensor object is None")
+                return
+                
+            accel = sensor.imu_get_accelerometer()
             logger.info(f"Accel (raw): X={accel[0]}, Y={accel[1]}, Z={accel[2]}")
             self.accelerometerSensorUpdated.emit(accel[0], accel[1], accel[2])
         except Exception as e:

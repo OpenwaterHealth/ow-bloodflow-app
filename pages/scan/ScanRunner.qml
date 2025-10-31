@@ -124,7 +124,7 @@ QtObject {
         onStarted: {
             // generous watchdog (depends on file size); adjust as needed
             if (_wd) try { _wd.stop() } catch(e) {}
-            _wd = Qt.createQmlObject('import QtQuick 6.5; Timer { interval: 180000; repeat: false }', postTask, "postWD")
+            _wd = Qt.createQmlObject('import QtQuick 6.5; Timer { interval: 180000000; repeat: false }', postTask, "postWD")
             _wd.triggered.connect(function() {
                 messageOut("Post-processing timed out.")
                 runner._finish(false, "Post-processing timed out", "", "")
