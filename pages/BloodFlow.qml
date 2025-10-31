@@ -645,9 +645,13 @@ Rectangle {
         }
         
         function onConnectionStatusChanged() {          
-            if (MOTIONInterface.leftSensorConnected) {
-
-            }   
+            // Reset ComboBox to "None" when sensor disconnects
+            if (!MOTIONInterface.leftSensorConnected) {
+                leftSensorSelector.currentIndex = 0
+            }
+            if (!MOTIONInterface.rightSensorConnected) {
+                rightSensorSelector.currentIndex = 0
+            }
             if (MOTIONInterface.consoleConnected) {
                 
             }            
