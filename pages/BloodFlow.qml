@@ -477,7 +477,7 @@ Rectangle {
                                     Layout.alignment: Qt.AlignHCenter
 
                                     Text {
-                                        text: "Failure"
+                                        text: "Safety"
                                         font.pixelSize: 14
                                         color: "#BDC3C7"
                                         horizontalAlignment: Text.AlignHCenter
@@ -489,15 +489,6 @@ Rectangle {
                                         color: MOTIONInterface.safetyFailure ? "red" : "green"
                                         border.color: "black"; border.width: 1
                                         Layout.alignment: Qt.AlignHCenter
-                                    }
-                                }
-
-                                IconSmallButton {
-                                    iconGlyph: "\ue984"  // Refresh icon
-                                    buttonText: "Refresh Safety Status"
-                                    Layout.alignment: Qt.AlignVCenter
-                                    onClicked: {
-                                        MOTIONInterface.readSafetyStatus()
                                     }
                                 }
                             }

@@ -103,6 +103,8 @@ class MOTIONConnector(QObject):
         self.connect_signals()
         self._viz_thread = None
         self._viz_worker = None
+        self._console_status_thread = None
+
 
 
         default_dir = os.path.join(os.getcwd(), "scan_data")
@@ -311,6 +313,11 @@ class MOTIONConnector(QObject):
             self._rightSensorConnected = True
         elif descriptor.upper() == "CONSOLE":
             self._consoleConnected = True
+            # Start console status thread when console connects
+            if self._console_status_thread is None:
+                self._console_status_thread = ConsoleStatusThread(self)
+                self._console_status_thread.statusUpdate.connect(self.handleUpdateCapStatus)
+                self._console_status_thread.start()
 
         self.signalConnected.emit(descriptor, port)
         self.connectionStatusChanged.emit() 
@@ -325,6 +332,10 @@ class MOTIONConnector(QObject):
             self._rightSensorConnected = False
         elif descriptor.upper() == "CONSOLE":
             self._consoleConnected = False
+            # Stop console status thread when console disconnects
+            if self._console_status_thread:
+                self._console_status_thread.stop()
+                self._console_status_thread = None
 
         print(f"Device disconnected: {descriptor} on port {port}")
         self.signalDisconnected.emit(descriptor, port)
@@ -1252,6 +1263,11 @@ class MOTIONConnector(QObject):
     def emitError(self, msg):
         self.errorOccurred.emit(msg)
 
+    @pyqtSlot(str)
+    def handleUpdateCapStatus(self, status_msg: str):
+        """Handle status updates from ConsoleStatusThread."""
+        logger.debug(f"Console status update: {status_msg}")
+
 # --- worker to run visualiztion ---
 class _VizWorker(QObject):
     finished = pyqtSignal()
@@ -1394,3 +1410,44 @@ class _ConfigureWorker(QThread):
 
         logger.info("FPGAs programmed & registers configured")
         self.finished.emit(True, "")
+
+# --- Console Status Thread ---
+class ConsoleStatusThread(QThread):
+    statusUpdate = pyqtSignal(str)
+
+    def __init__(self, connector: MOTIONConnector, parent=None):
+        super().__init__(parent)
+        self.connector = connector
+        self._running = True
+        self._mutex = QMutex()
+        self._wait_condition = QWaitCondition()
+        self.last_run = time.time()
+
+    def run(self):
+        """Run loop that calls readSafetyStatus() every second when console is connected."""
+        while self._running:
+            now = time.time()
+
+            # Check if console is connected before reading safety status
+            if self.connector._consoleConnected:
+                # Run the safety status check ~1 Hz
+                if now - self.last_run >= 1.0:
+                    try:
+                        # Call readSafetyStatus() on the connector
+                        self.connector.readSafetyStatus()
+                        self.last_run = now
+                    except Exception as e:
+                        logger.error(f"Console status query failed: {e}")
+                        self.statusUpdate.emit(f"Safety status read error: {e}")
+
+            # Sleep for up to 100ms, or until stop() wakes us
+            self._mutex.lock()
+            self._wait_condition.wait(self._mutex, 100)
+            self._mutex.unlock()
+
+    def stop(self):
+        """Called from another thread to stop the thread gracefully."""
+        self._running = False
+        self._wait_condition.wakeAll()
+        self.quit()
+        self.wait()
