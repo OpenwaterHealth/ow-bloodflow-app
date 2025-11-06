@@ -85,6 +85,7 @@ class MOTIONConnector(QObject):
         self._config_thread = None
         self._laserOn = False
         self._safetyFailure = False
+        self._i2c_mutex = QMutex()
         self._running = False
         self._trigger_state = "OFF"
         self._state = DISCONNECTED
@@ -102,6 +103,8 @@ class MOTIONConnector(QObject):
         self.connect_signals()
         self._viz_thread = None
         self._viz_worker = None
+        self._console_status_thread = None
+
 
 
         default_dir = os.path.join(os.getcwd(), "scan_data")
@@ -310,6 +313,11 @@ class MOTIONConnector(QObject):
             self._rightSensorConnected = True
         elif descriptor.upper() == "CONSOLE":
             self._consoleConnected = True
+            # Start console status thread when console connects
+            if self._console_status_thread is None:
+                self._console_status_thread = ConsoleStatusThread(self)
+                self._console_status_thread.statusUpdate.connect(self.handleUpdateCapStatus)
+                self._console_status_thread.start()
 
         self.signalConnected.emit(descriptor, port)
         self.connectionStatusChanged.emit() 
@@ -324,6 +332,10 @@ class MOTIONConnector(QObject):
             self._rightSensorConnected = False
         elif descriptor.upper() == "CONSOLE":
             self._consoleConnected = False
+            # Stop console status thread when console disconnects
+            if self._console_status_thread:
+                self._console_status_thread.stop()
+                self._console_status_thread = None
 
         print(f"Device disconnected: {descriptor} on port {port}")
         self.signalDisconnected.emit(descriptor, port)
@@ -358,9 +370,21 @@ class MOTIONConnector(QObject):
             else:
                 logger.error(f"Invalid target for sensor info query: {target}")
                 return
-            fw_version = motion_interface.sensors[sensor_tag].get_version()
+            
+            # Check if sensor is connected
+            if (sensor_tag == "left" and not self._leftSensorConnected) or \
+               (sensor_tag == "right" and not self._rightSensorConnected):
+                logger.error(f"{sensor_tag.capitalize()} sensor not connected")
+                return
+            
+            sensor = motion_interface.sensors[sensor_tag]
+            if sensor is None:
+                logger.error(f"{sensor_tag.capitalize()} sensor object is None")
+                return
+                
+            fw_version = sensor.get_version()
             logger.info(f"Version: {fw_version}")
-            hw_id = motion_interface.sensors[sensor_tag].get_hardware_id()
+            hw_id = sensor.get_hardware_id()
             device_id = base58.b58encode(bytes.fromhex(hw_id)).decode()
             self.sensorDeviceInfoReceived.emit(fw_version, device_id)
             logger.info(f"Sensor Device Info - Firmware: {fw_version}, Device ID: {device_id}")
@@ -389,7 +413,19 @@ class MOTIONConnector(QObject):
             else:
                 logger.error(f"Invalid target for sensor info query: {target}")
                 return
-            imu_temp = motion_interface.sensors[sensor_tag].imu_get_temperature()  
+            
+            # Check if sensor is connected
+            if (sensor_tag == "left" and not self._leftSensorConnected) or \
+               (sensor_tag == "right" and not self._rightSensorConnected):
+                logger.error(f"{sensor_tag.capitalize()} sensor not connected")
+                return
+            
+            sensor = motion_interface.sensors[sensor_tag]
+            if sensor is None:
+                logger.error(f"{sensor_tag.capitalize()} sensor object is None")
+                return
+                
+            imu_temp = sensor.imu_get_temperature()  
             logger.info(f"Temperature Data - IMU Temp: {imu_temp}")
             self.temperatureSensorUpdated.emit(imu_temp)
         except Exception as e:
@@ -491,7 +527,19 @@ class MOTIONConnector(QObject):
             else:
                 logger.error(f"Invalid target for sensor info query: {target}")
                 return
-            accel = motion_interface.sensors[sensor_tag].imu_get_accelerometer()
+            
+            # Check if sensor is connected
+            if (sensor_tag == "left" and not self._leftSensorConnected) or \
+               (sensor_tag == "right" and not self._rightSensorConnected):
+                logger.error(f"{sensor_tag.capitalize()} sensor not connected")
+                return
+            
+            sensor = motion_interface.sensors[sensor_tag]
+            if sensor is None:
+                logger.error(f"{sensor_tag.capitalize()} sensor object is None")
+                return
+                
+            accel = sensor.imu_get_accelerometer()
             logger.info(f"Accel (raw): X={accel[0]}, Y={accel[1]}, Z={accel[2]}")
             self.accelerometerSensorUpdated.emit(accel[0], accel[1], accel[2])
         except Exception as e:
@@ -688,6 +736,7 @@ class MOTIONConnector(QObject):
     @pyqtSlot()
     def readSafetyStatus(self):
         # Replace this with your actual console status check
+        print("Reading safety status")
         try:
             muxIdx = 1
             i2cAddr = 0x41
@@ -705,21 +754,24 @@ class MOTIONConnector(QObject):
                 if status:
                     statuses[label] = status[0]                
                 else:
+                    print("I2C read error")
                     raise Exception("I2C read error")
                 
             status_text = f"SE: 0x{statuses['SE']:02X}, SO: 0x{statuses['SO']:02X}"
-            
             if (statuses["SE"] & 0x0F) == 0 and (statuses["SO"] & 0x0F) == 0:
+                logging.info(f"No laser safety failure detected")
                 if self._safetyFailure:
                     self._safetyFailure = False
                     self.safetyFailureStateChanged.emit(False)
+                    print("No laser safety failure detected")
+                    logging.info(f"No laser safety failure detected")
             else:
                 if not self._safetyFailure:
                     self._safetyFailure = True
                     self.stopTrigger()
                     self.laserStateChanged.emit(False)
                     self.safetyFailureStateChanged.emit(True)  
-                    logging.error(f"Failure Detected: {status_text}")
+                    print(f"Failure Detected: {status_text}")
 
             # Emit combined status if needed
             
@@ -727,6 +779,32 @@ class MOTIONConnector(QObject):
 
         except Exception as e:
             logging.error(f"Console status query failed: {e}")
+
+    @pyqtSlot(str, int, int, int, int, int, result=QVariant)
+    def i2cReadBytes(self, target: str, mux_idx: int, channel: int, i2c_addr: int, offset: int, data_len: int):
+        """Send i2c read to device"""
+        locker = QMutexLocker(self._i2c_mutex)  # Lock auto-released at function exit
+        try:
+            logger.info(f"I2C Read Request -> target={target}, mux_idx={mux_idx}, channel={channel}, "
+                f"i2c_addr=0x{int(i2c_addr):02X}, offset=0x{int(offset):02X}, read_len={int(data_len)}"
+            )            
+
+            if target == "CONSOLE":                
+                fpga_data, fpga_data_len = motion_interface.console_module.read_i2c_packet(mux_index=mux_idx, channel=channel, device_addr=i2c_addr, reg_addr=offset, read_len=data_len)
+                if fpga_data is None or fpga_data_len == 0:
+                    logger.error(f"Read I2C Failed")
+                    return []
+                else:
+                    logger.info(f"Read I2C Success")
+                    logger.info(f"Raw bytes: {fpga_data.hex(' ')}")  # Print as hex bytes separated by spaces
+                    return list(fpga_data[:fpga_data_len]) 
+                
+            elif target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":
+                logger.error(f"I2C Read Not Implemented")
+                return []
+        except Exception as e:
+            logger.error(f"Error sending i2c read command: {e}")
+            return []
 
     @pyqtSlot(result=list)
     def get_scan_list(self):
@@ -1185,6 +1263,11 @@ class MOTIONConnector(QObject):
     def emitError(self, msg):
         self.errorOccurred.emit(msg)
 
+    @pyqtSlot(str)
+    def handleUpdateCapStatus(self, status_msg: str):
+        """Handle status updates from ConsoleStatusThread."""
+        logger.debug(f"Console status update: {status_msg}")
+
 # --- worker to run visualiztion ---
 class _VizWorker(QObject):
     finished = pyqtSignal()
@@ -1327,3 +1410,44 @@ class _ConfigureWorker(QThread):
 
         logger.info("FPGAs programmed & registers configured")
         self.finished.emit(True, "")
+
+# --- Console Status Thread ---
+class ConsoleStatusThread(QThread):
+    statusUpdate = pyqtSignal(str)
+
+    def __init__(self, connector: MOTIONConnector, parent=None):
+        super().__init__(parent)
+        self.connector = connector
+        self._running = True
+        self._mutex = QMutex()
+        self._wait_condition = QWaitCondition()
+        self.last_run = time.time()
+
+    def run(self):
+        """Run loop that calls readSafetyStatus() every second when console is connected."""
+        while self._running:
+            now = time.time()
+
+            # Check if console is connected before reading safety status
+            if self.connector._consoleConnected:
+                # Run the safety status check ~1 Hz
+                if now - self.last_run >= 1.0:
+                    try:
+                        # Call readSafetyStatus() on the connector
+                        self.connector.readSafetyStatus()
+                        self.last_run = now
+                    except Exception as e:
+                        logger.error(f"Console status query failed: {e}")
+                        self.statusUpdate.emit(f"Safety status read error: {e}")
+
+            # Sleep for up to 100ms, or until stop() wakes us
+            self._mutex.lock()
+            self._wait_condition.wait(self._mutex, 100)
+            self._mutex.unlock()
+
+    def stop(self):
+        """Called from another thread to stop the thread gracefully."""
+        self._running = False
+        self._wait_condition.wakeAll()
+        self.quit()
+        self.wait()

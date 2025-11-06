@@ -16,8 +16,13 @@ Rectangle {
     height: 260
     radius: 10
     color: "#1E1E20"
-    border.color: "#3E4E6F"
+    border.color: sensorConnected ? "#3E4E6F" : "#6E3E3F"
     border.width: 2
+    opacity: sensorConnected ? 1.0 : 0.4
+    enabled: sensorConnected
+
+    property bool sensorConnected: (sensorSide === "left" && connector && connector.leftSensorConnected) || 
+                                   (sensorSide === "right" && connector && connector.rightSensorConnected)
 
     ColumnLayout {
         anchors.fill: parent
@@ -27,7 +32,7 @@ Rectangle {
         Text {
             text: root.title
             font.pixelSize: 16
-            color: "#BDC3C7"
+            color: root.sensorConnected ? "#BDC3C7" : "#8B8B8D"
             horizontalAlignment: Text.AlignHCenter
             Layout.alignment: Qt.AlignHCenter
         }
@@ -40,31 +45,31 @@ Rectangle {
 
             // Row 1
             Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
-                color: sensorActive[7] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
+                color: sensorActive[7] && root.sensorConnected ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
             Item {}
             Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
-                color: sensorActive[0] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
+                color: sensorActive[0] && root.sensorConnected ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
 
             // Row 2
             Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
-                color: sensorActive[6] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
+                color: sensorActive[6] && root.sensorConnected ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
             Item {}
             Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
-                color: sensorActive[1] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
+                color: sensorActive[1] && root.sensorConnected ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
 
             // Row 3
             Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
-                color: sensorActive[5] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
+                color: sensorActive[5] && root.sensorConnected ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
             Item {}
             Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
-                color: sensorActive[2] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
+                color: sensorActive[2] && root.sensorConnected ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
 
             // Row 4
             Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
-                color: sensorActive[4] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
+                color: sensorActive[4] && root.sensorConnected ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
             Item {}
             Rectangle { width: circleSize; height: circleSize; radius: circleSize/2
-                color: sensorActive[3] ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
+                color: sensorActive[3] && root.sensorConnected ? "#4A90E2" : "#666666"; border.color: "black"; border.width: 1 }
 
             // Row 5 - Laser
             Item {}
@@ -115,8 +120,32 @@ Rectangle {
     
     // Initialize fan status when component loads
     Component.onCompleted: {
-        if (connector) {
+        updateFanStatus()
+        resetCamerasWhenDisconnected()
+    }
+    
+    // Update fan status when connection changes
+    Connections {
+        target: connector
+        function onConnectionStatusChanged() {
+            updateFanStatus()
+            resetCamerasWhenDisconnected()
+        }
+    }
+    
+    // Helper function to update fan status
+    function updateFanStatus() {
+        if (connector && sensorConnected) {
             root.fanOn = connector.getFanControlStatus(root.sensorSide)
+        } else {
+            root.fanOn = false
+        }
+    }
+    
+    // Helper function to reset cameras when sensor disconnects
+    function resetCamerasWhenDisconnected() {
+        if (!sensorConnected) {
+            root.sensorActive = [false, false, false, false, false, false, false, false]
         }
     }
 }

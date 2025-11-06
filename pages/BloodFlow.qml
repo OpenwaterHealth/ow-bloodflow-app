@@ -468,23 +468,28 @@ Rectangle {
                             }
 
                             // Failure Indicator
-                            ColumnLayout {
-                                spacing: 4
+                            RowLayout {
+                                spacing: 6
                                 Layout.alignment: Qt.AlignHCenter
 
-                                Text {
-                                    text: "Failure"
-                                    font.pixelSize: 14
-                                    color: "#BDC3C7"
-                                    horizontalAlignment: Text.AlignHCenter
+                                ColumnLayout {
+                                    spacing: 4
                                     Layout.alignment: Qt.AlignHCenter
-                                }
 
-                                Rectangle {
-                                    width: 20; height: 20; radius: 10
-                                    color: MOTIONInterface.safetyFailure ? "red" : "grey"
-                                    border.color: "black"; border.width: 1
-                                    Layout.alignment: Qt.AlignHCenter
+                                    Text {
+                                        text: "Safety"
+                                        font.pixelSize: 14
+                                        color: "#BDC3C7"
+                                        horizontalAlignment: Text.AlignHCenter
+                                        Layout.alignment: Qt.AlignHCenter
+                                    }
+
+                                    Rectangle {
+                                        width: 20; height: 20; radius: 10
+                                        color: MOTIONInterface.safetyFailure ? "red" : "green"
+                                        border.color: "black"; border.width: 1
+                                        Layout.alignment: Qt.AlignHCenter
+                                    }
                                 }
                             }
                         }
@@ -645,9 +650,13 @@ Rectangle {
         }
         
         function onConnectionStatusChanged() {          
-            if (MOTIONInterface.leftSensorConnected) {
-
-            }   
+            // Reset ComboBox to "None" when sensor disconnects
+            if (!MOTIONInterface.leftSensorConnected) {
+                leftSensorSelector.currentIndex = 0
+            }
+            if (!MOTIONInterface.rightSensorConnected) {
+                rightSensorSelector.currentIndex = 0
+            }
             if (MOTIONInterface.consoleConnected) {
                 
             }            
