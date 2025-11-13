@@ -44,7 +44,7 @@ def main():
     engine.rootContext().setContextProperty("AppFlags", {
         "advancedSensors": True
     })
-    engine.rootContext().setContextProperty("appVersion", "0.3.7")
+    engine.rootContext().setContextProperty("appVersion", "0.3.8")
 
     # Load the QML file
     engine.load(resource_path("main.qml"))
