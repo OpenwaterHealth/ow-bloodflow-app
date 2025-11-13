@@ -5,7 +5,8 @@ import argparse
 import warnings
 import logging
 
-from PyQt6.QtGui import QGuiApplication, QIcon
+from PyQt6.QtGui import QIcon
+from PyQt6.QtWidgets import QApplication   
 from PyQt6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
 from qasync import QEventLoop
 
@@ -34,7 +35,7 @@ def main():
     parser.add_argument("--advanced-sensors", action="store_true")
     my_args, _unknown = parser.parse_known_args(sys.argv[1:])
 
-    app = QGuiApplication(sys.argv)
+    app = QApplication(sys.argv)
 
     # Set the global application icon
     app.setWindowIcon(QIcon("assets/images/favicon.png"))

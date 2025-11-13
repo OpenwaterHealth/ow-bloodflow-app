@@ -333,8 +333,7 @@ Rectangle {
 
                             Component.onCompleted: {
                                 if (advancedSensors) {
-                                    currentIndex = 1    // default to "Near"
-                                    rightSensorView.sensorActive = [false,true,false,true,true,false,true,false] // 0x5A
+                                    currentIndex = 0    // default to "None"                                    
                                 } else {
                                     // manually trigger case 1 if only one option
                                     currentIndex = 1    // default to "Near"
@@ -347,7 +346,7 @@ Rectangle {
                     Component.onCompleted: {
                         // Force default selection handlers to run so sensorActive arrays are set
                         leftSensorSelector.currentIndex = 1;
-                        rightSensorSelector.currentIndex = 1;
+                        rightSensorSelector.currentIndex = 0;
                     }
                 }
             }
@@ -657,7 +656,7 @@ Rectangle {
                 leftSensorSelector.currentIndex = 1
             }
             if (!MOTIONInterface.rightSensorConnected) {
-                rightSensorSelector.currentIndex = 1
+                rightSensorSelector.currentIndex = 0
             }
             if (MOTIONInterface.consoleConnected) {
                 
