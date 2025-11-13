@@ -508,7 +508,7 @@ Rectangle {
                 border.width: 2
 
                 // public duration value (seconds)
-                property int durationSec: 30
+                property int durationSec: 16
 
                 ColumnLayout {
                     anchors.fill: parent
