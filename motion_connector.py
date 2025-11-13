@@ -1236,7 +1236,8 @@ class MOTIONConnector(QObject):
             viz._nmodules = nmodules
 
             if self._advanced_sensors:
-                fig = viz.plot(("contrast", "mean"))
+                # fig = viz.plot(("contrast", "mean"))
+                fig = viz.plot(("BFI", "BVI"))
             else:
                 fig = viz.plot(("BFI", "BVI"))
             plt.show(block=False)
