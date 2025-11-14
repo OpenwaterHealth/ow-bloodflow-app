@@ -35,10 +35,25 @@ def main():
     parser.add_argument("--advanced-sensors", action="store_true")
     my_args, _unknown = parser.parse_known_args(sys.argv[1:])
 
-    app = QApplication(sys.argv)
+    app = QApplication(sys.argv) 
 
     # Set the global application icon
-    app.setWindowIcon(QIcon("assets/images/favicon.png"))
+    icon_path = resource_path("assets/images/favicon.ico")
+    app.setWindowIcon(QIcon(icon_path))
+    
+    # Set application properties for Windows taskbar
+    app.setApplicationName("OpenWater Bloodflow")
+    app.setApplicationVersion("0.3.8f")
+    app.setOrganizationName("OpenWater Health")
+    
+    # Windows-specific: Set application user model ID for proper taskbar grouping
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("OpenWaterHealth.BloodflowApp.0.3.8f")
+        except Exception:
+            pass  # Ignore if not available
+    
     engine = QQmlApplicationEngine()
 
     # Expose to QML

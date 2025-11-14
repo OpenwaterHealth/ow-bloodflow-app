@@ -19,9 +19,13 @@ binaries = []
 for item in ("main.qml",):
     if os.path.exists(item):
         datas.append((item, "."))
-for folder in ("pages", "components", "assets", "config", "processing"):
+for folder in ("pages", "components", "assets", "models", "config"):
     if os.path.isdir(folder):
         datas.append((folder, folder))
+
+# Ensure the icon is explicitly included
+if os.path.exists(ICON_FILE):
+    datas.append((ICON_FILE, "assets/images"))
 
 # --- PyQt6 (keep as before) ---
 qt_datas, qt_bins, qt_hidden = collect_all("PyQt6")
