@@ -145,16 +145,32 @@ class VisualizeBloodflow:
         # compute BFI/BVI
         BFI = np.zeros(contrast.shape, dtype=float)
         BVI = np.zeros(mean.shape, dtype=float)
-        cams_per_module = len(camera_inds) // nmodules if nmodules else len(camera_inds)
-
-        for i in range(nmodules):
-            for j in range(cams_per_module):
-                ind = cams_per_module * i + j
-                cam = int(camera_inds[ind])
-                cden = (self.C_max[i, cam] - self.C_min[i, cam]) or 1.0
-                iden = (self.I_max[i, cam] - self.I_min[i, cam]) or 1.0
-                BFI[ind, :] = (1 - (contrast[ind, :] - self.C_min[i, cam]) / cden) * 10.0
-                BVI[ind, :] = (1 - (mean[ind, :] - self.I_min[i, cam]) / iden) * 10.0
+        
+        # Handle cameras by their actual IDs and module assignments
+        for ind, cam_id in enumerate(camera_inds):
+            # Determine which module this camera belongs to based on the _sides array
+            if hasattr(self, '_sides') and ind < len(self._sides):
+                module_idx = 0 if self._sides[ind] == "left" else 1
+            else:
+                # Fallback: assume first half are left, second half are right
+                module_idx = 0 if ind < len(camera_inds) // 2 else 1
+            
+            # Ensure module index is valid
+            module_idx = min(module_idx, nmodules - 1) if nmodules > 0 else 0
+            
+            # Use camera ID for calibration lookup (mod 8 to handle camera positions 0-7)
+            cam_pos = int(cam_id) % 8
+            
+            # Ensure camera position is within calibration array bounds
+            if cam_pos < self.C_max.shape[1] and module_idx < self.C_max.shape[0]:
+                cden = (self.C_max[module_idx, cam_pos] - self.C_min[module_idx, cam_pos]) or 1.0
+                iden = (self.I_max[module_idx, cam_pos] - self.I_min[module_idx, cam_pos]) or 1.0
+                BFI[ind, :] = (1 - (contrast[ind, :] - self.C_min[module_idx, cam_pos]) / cden) * 10.0
+                BVI[ind, :] = (1 - (mean[ind, :] - self.I_min[module_idx, cam_pos]) / iden) * 10.0
+            else:
+                # Default calculation for out-of-bounds cameras
+                BFI[ind, :] = contrast[ind, :] * 10.0  # Simple fallback
+                BVI[ind, :] = mean[ind, :] * 10.0      # Simple fallback
 
         # stash results
         self._BFI = BFI
@@ -190,28 +206,48 @@ class VisualizeBloodflow:
         ind1 = int(self.frequency_hz * t1)
         ind2 = int(self.frequency_hz * t2)
 
-        ncameras = int(len(camera_inds) / max(nmodules, 1))
-        fig, ax = plt.subplots(nrows=ncameras, ncols=max(nmodules, 1), figsize=(12, 8), squeeze=False)
+        # Create a fixed 4x2 grid (4 camera positions, up to 2 modules)
+        fig, ax = plt.subplots(nrows=4, ncols=max(nmodules, 1), figsize=(12, 8), squeeze=False)
 
-        # Ensure we always have two columns (Left/Right) when two modules
-        if nmodules == 1 and ax.shape[1] == 1:
-            # Plot into column 0, still label as "Left"
-            pass
+        # Ensure we always have correct shape even for single module
+        if nmodules == 1 and ax.ndim == 1:
+            ax = ax.reshape(-1, 1)
 
+        # Birmingham mapping: camera position to subplot row
+        position_to_row = {0: 0, 1: 2, 2: 3, 3: 1}  # Far sensor on top
+        
+        # Track which cameras we've plotted per module
+        cameras_per_module = len(camera_inds) // max(nmodules, 1) if nmodules else len(camera_inds)
+        
+        # Initialize all subplots as empty placeholders
+        for row in range(4):
+            for col in range(max(nmodules, 1)):
+                ax[row, col].text(0.5, 0.5, 'No Data', 
+                                ha='center', va='center', 
+                                transform=ax[row, col].transAxes,
+                                fontsize=12, alpha=0.5)
+                ax[row, col].set_ylabel(f'Camera Position {row}')
+                # Hide ticks for empty plots
+                ax[row, col].set_xticks([])
+                ax[row, col].set_yticks([])
+
+        # Plot actual camera data
         for j in range(nmodules or 1):
-            for i in range(ncameras):
-                # Birmingham far sensor on top mapping
-                if i == 0:
-                    m = 0
-                elif i == 1:
-                    m = 2
-                elif i == 2:
-                    m = 3
-                else:
-                    m = 1
-
-                ind_cam = ncameras * j + i
-                ax_mj = ax[m, j]
+            for i in range(cameras_per_module):
+                ind_cam = cameras_per_module * j + i
+                if ind_cam >= len(camera_inds):
+                    break
+                    
+                cam_id = int(camera_inds[ind_cam])
+                # Map camera ID to subplot row using Birmingham mapping
+                subplot_row = position_to_row.get(cam_id % 4, cam_id % 4)
+                
+                ax_mj = ax[subplot_row, j]
+                
+                # Clear the placeholder text
+                ax_mj.clear()
+                
+                # Plot the actual data
                 line1 = ax_mj.plot(t[ind1:ind2], x[ind_cam, ind1:ind2], 'k', linewidth=2, label=legend[0])
                 ax2 = ax_mj.twinx()
                 line2 = ax2.plot(t[ind1:ind2], y[ind_cam, ind1:ind2], 'r', linewidth=1, label=legend[1])
@@ -226,7 +262,7 @@ class VisualizeBloodflow:
                 lines = line1 + line2
                 labels = [l.get_label() for l in lines]
                 ax_mj.legend(lines, labels)
-                ax_mj.set_ylabel('Camera ' + str(int(camera_inds[i])))
+                ax_mj.set_ylabel(f'Camera {cam_id}')
 
         # Titles/labels
         ax[0, 0].set_title('Left')
