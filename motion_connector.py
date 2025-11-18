@@ -165,7 +165,7 @@ class MOTIONConnector(QObject):
                 csv_writer = csv.writer(f)
                 # Write CSV header
                 csv_writer.writerow(
-                    ["cam_id", "frame_id", *range(1024), "temperature", "sum"]
+                    ["cam_id", "frame_id", "timestamp_s", *range(1024), "temperature", "sum"]
                 )
                 
                 # Buffer to accumulate incoming data
@@ -989,7 +989,7 @@ class MOTIONConnector(QObject):
                 writer_stops: dict[str, threading.Event] = {}
 
                 # If payload size depends on enabled cameras, compute here; otherwise keep constant.
-                expected_size = 32833  # TODO: adjust if payload varies with mask
+                expected_size = 32837  # TODO: adjust if payload varies with mask
 
                 logger.info("Setup streaming per active side")
                 for side, mask, sensor in active_sides:
