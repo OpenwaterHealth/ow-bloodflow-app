@@ -1300,17 +1300,35 @@ class _VizWorker(QObject):
     def run(self):
         try:
             from processing.visualize_bloodflow import VisualizeBloodflow
-            viz = VisualizeBloodflow(self.left_csv or None, self.right_csv or None, t1=self.t1, t2=self.t2)
+            # Convert empty strings to None for optional right_csv, but ensure left_csv is valid
+            left_path = self.left_csv if self.left_csv else None
+            right_path = self.right_csv if self.right_csv else None
+            
+            # If only right_csv is provided, use it as left_csv
+            if not left_path and right_path:
+                left_path = right_path
+                right_path = None
+            
+            if not left_path:
+                self.error.emit("No valid CSV file provided for visualization")
+                self.finished.emit()
+                return
+                
+            viz = VisualizeBloodflow(left_path, right_path, t1=self.t1, t2=self.t2)
             viz.compute()       
 
             # Save results CSV based on left_csv naming rule            
-            new_file_name = re.sub(r"_left.*\.csv$", "_bfi_results.csv", self.left_csv)
+            new_file_name = re.sub(r"_left.*\.csv$", "_bfi_results.csv", left_path)
+            if not new_file_name.endswith("_bfi_results.csv"):
+                # Fallback if pattern doesn't match (e.g., right-only file)
+                base = os.path.splitext(left_path)[0]
+                new_file_name = f"{base}_bfi_results.csv"
             viz.save_results_csv(new_file_name)
             logger.info(f"Results CSV saved to: {new_file_name}")
 
             bfi, bvi, cam_inds, contrast, mean = viz.get_results()
             payload = {"bfi": bfi, "bvi": bvi, "camera_inds": cam_inds, "contrast": contrast, "mean": mean,
-                       "nmodules": 2 if self.right_csv else 1,
+                       "nmodules": 2 if right_path else 1,
                        "freq": viz.frequency_hz, "t1": viz.t1, "t2": viz.t2}
             self.resultsReady.emit(payload)
             self.finished.emit()
