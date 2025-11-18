@@ -191,27 +191,51 @@ class VisualizeBloodflow:
         ind2 = int(self.frequency_hz * t2)
 
         ncameras = int(len(camera_inds) / max(nmodules, 1))
-        fig, ax = plt.subplots(nrows=ncameras, ncols=max(nmodules, 1), figsize=(12, 8), squeeze=False)
-
-        # Ensure we always have two columns (Left/Right) when two modules
-        if nmodules == 1 and ax.shape[1] == 1:
-            # Plot into column 0, still label as "Left"
-            pass
+        
+        # For 8 cameras, use 4 rows × 2 columns layout per module
+        # For other counts, use the standard layout
+        if ncameras == 8:
+            nrows = 4
+            ncols = 2 * max(nmodules, 1)  # 2 columns per module
+        else:
+            nrows = ncameras
+            ncols = max(nmodules, 1)
+        
+        fig, ax = plt.subplots(nrows=nrows, ncols=ncols, figsize=(12, 8), squeeze=False)
 
         for j in range(nmodules or 1):
             for i in range(ncameras):
-                # Birmingham far sensor on top mapping
-                if i == 0:
-                    m = 0
-                elif i == 1:
-                    m = 2
-                elif i == 2:
-                    m = 3
-                else:
-                    m = 1
-
                 ind_cam = ncameras * j + i
-                ax_mj = ax[m, j]
+                
+                # Determine row and column for this camera
+                if ncameras == 4:
+                    # Birmingham far sensor on top mapping (for 4 cameras)
+                    if i == 0:
+                        m = 0
+                    elif i == 1:
+                        m = 2
+                    elif i == 2:
+                        m = 3
+                    else:
+                        m = 1
+                    col = j
+                elif ncameras == 8:
+                    # 2-column layout per module: left column (cameras 0-3), right column (cameras 7-4 in reverse)
+                    if i < 4:
+                        # Left column: cameras 0, 1, 2, 3 → rows 0, 1, 2, 3
+                        m = i
+                        col = j * 2  # Module j uses columns j*2 and j*2+1
+                    else:
+                        # Right column: cameras 7, 6, 5, 4 → rows 0, 1, 2, 3
+                        # i=7→row=0, i=6→row=1, i=5→row=2, i=4→row=3
+                        m = 7 - i
+                        col = j * 2 + 1  # Right column of module j
+                else:
+                    # For other camera counts, use sequential ordering
+                    m = i
+                    col = j
+
+                ax_mj = ax[m, col]
                 line1 = ax_mj.plot(t[ind1:ind2], x[ind_cam, ind1:ind2], 'k', linewidth=2, label=legend[0])
                 ax2 = ax_mj.twinx()
                 line2 = ax2.plot(t[ind1:ind2], y[ind_cam, ind1:ind2], 'r', linewidth=1, label=legend[1])
@@ -226,15 +250,32 @@ class VisualizeBloodflow:
                 lines = line1 + line2
                 labels = [l.get_label() for l in lines]
                 ax_mj.legend(lines, labels)
-                ax_mj.set_ylabel('Camera ' + str(int(camera_inds[i])))
+                ax_mj.set_ylabel('Camera ' + str(int(camera_inds[ind_cam])))
 
         # Titles/labels
-        ax[0, 0].set_title('Left')
-        if ax.shape[1] > 1:
-            ax[0, 1].set_title('Right')
-        ax[-1, 0].set_xlabel('Time (s)')
-        if ax.shape[1] > 1:
-            ax[-1, 1].set_xlabel('Time (s)')
+        if ncameras == 8:
+            # For 8 cameras, label the columns appropriately
+            if nmodules == 1:
+                # Single module: label columns as Left/Right
+                ax[0, 0].set_title('Left')
+                ax[0, 1].set_title('Right')
+                ax[-1, 0].set_xlabel('Time (s)')
+                ax[-1, 1].set_xlabel('Time (s)')
+            else:
+                # Multiple modules: label each module's columns
+                for mod in range(nmodules):
+                    ax[0, mod * 2].set_title('Left' if mod == 0 else f'Left (Module {mod+1})')
+                    ax[0, mod * 2 + 1].set_title('Right' if mod == 0 else f'Right (Module {mod+1})')
+                    ax[-1, mod * 2].set_xlabel('Time (s)')
+                    ax[-1, mod * 2 + 1].set_xlabel('Time (s)')
+        else:
+            # Standard layout for other configurations
+            ax[0, 0].set_title('Left')
+            if ax.shape[1] > 1:
+                ax[0, 1].set_title('Right')
+            ax[-1, 0].set_xlabel('Time (s)')
+            if ax.shape[1] > 1:
+                ax[-1, 1].set_xlabel('Time (s)')
 
         fig.tight_layout()
         return fig
@@ -256,7 +297,7 @@ class VisualizeBloodflow:
             side = self._sides[cam_idx]
             for frame_idx in range(nframes):
                 rows.append({
-                    "camera": int(cam_id),
+                    "camera": int(cam_id+1),
                     "side": side,
                     "time_s": time_s[frame_idx],
                     "BFI": self._BFI[cam_idx, frame_idx],
