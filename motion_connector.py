@@ -117,6 +117,13 @@ class MOTIONConnector(QObject):
         self._subject_id = self.generate_subject_id()
         logger.info(f"[Connector] Generated subject ID: {self._subject_id}")
 
+        # Start console status thread if console is already connected at startup
+        if self._consoleConnected and self._console_status_thread is None:
+            logger.info("[Connector] Console already connected at startup, starting status thread")
+            self._console_status_thread = ConsoleStatusThread(self)
+            self._console_status_thread.statusUpdate.connect(self.handleUpdateCapStatus)
+            self._console_status_thread.start()
+
     def _refresh_connections(self):
         """Re-read connection states from motion_interface and notify QML."""
         console_connected, left_sensor_connected, right_sensor_connected = self._interface.is_device_connected()
@@ -127,7 +134,21 @@ class MOTIONConnector(QObject):
             self._rightSensorConnected != right_sensor_connected
         )
 
+        # Handle console status thread lifecycle based on connection state changes
+        console_was_connected = self._consoleConnected
         self._consoleConnected = console_connected
+        
+        if console_connected and not console_was_connected and self._console_status_thread is None:
+            # Console just connected, start the thread
+            logger.info("[Connector] Console connected, starting status thread")
+            self._console_status_thread = ConsoleStatusThread(self)
+            self._console_status_thread.statusUpdate.connect(self.handleUpdateCapStatus)
+            self._console_status_thread.start()
+        elif not console_connected and console_was_connected and self._console_status_thread is not None:
+            # Console just disconnected, stop the thread
+            logger.info("[Connector] Console disconnected, stopping status thread")
+            self._console_status_thread.stop()
+            self._console_status_thread = None
         self._leftSensorConnected = left_sensor_connected
         self._rightSensorConnected = right_sensor_connected
 
@@ -1454,28 +1475,24 @@ class ConsoleStatusThread(QThread):
         self._running = True
         self._mutex = QMutex()
         self._wait_condition = QWaitCondition()
-        self.last_run = time.time()
 
     def run(self):
-        """Run loop that calls readSafetyStatus() every second when console is connected."""
+        """Run loop that calls readSafetyStatus() every 1000ms when console is connected."""
+        logger.info("Console status thread started")
+        print("Console status thread started")
         while self._running:
-            now = time.time()
-
             # Check if console is connected before reading safety status
             if self.connector._consoleConnected:
-                # Run the safety status check ~1 Hz
-                if now - self.last_run >= 1.0:
-                    try:
-                        # Call readSafetyStatus() on the connector
-                        self.connector.readSafetyStatus()
-                        self.last_run = now
-                    except Exception as e:
-                        logger.error(f"Console status query failed: {e}")
-                        self.statusUpdate.emit(f"Safety status read error: {e}")
+                try:
+                    # Call readSafetyStatus() on the connector
+                    self.connector.readSafetyStatus()
+                except Exception as e:
+                    logger.error(f"Console status query failed: {e}")
+                    self.statusUpdate.emit(f"Safety status read error: {e}")
 
-            # Sleep for up to 100ms, or until stop() wakes us
+            # Sleep for exactly 1000ms, or until stop() wakes us
             self._mutex.lock()
-            self._wait_condition.wait(self._mutex, 100)
+            self._wait_condition.wait(self._mutex, 1000)
             self._mutex.unlock()
 
     def stop(self):
