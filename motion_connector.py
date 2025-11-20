@@ -124,38 +124,6 @@ class MOTIONConnector(QObject):
             self._console_status_thread.statusUpdate.connect(self.handleUpdateCapStatus)
             self._console_status_thread.start()
 
-    def _refresh_connections(self):
-        """Re-read connection states from motion_interface and notify QML."""
-        console_connected, left_sensor_connected, right_sensor_connected = self._interface.is_device_connected()
-        logger.info(f"Connection status updated: Console={console_connected}, Left Sensor={left_sensor_connected}, Right Sensor={right_sensor_connected}")
-        changed = (
-            self._consoleConnected != console_connected or
-            self._leftSensorConnected != left_sensor_connected or
-            self._rightSensorConnected != right_sensor_connected
-        )
-
-        # Handle console status thread lifecycle based on connection state changes
-        console_was_connected = self._consoleConnected
-        self._consoleConnected = console_connected
-        
-        if console_connected and not console_was_connected and self._console_status_thread is None:
-            # Console just connected, start the thread
-            logger.info("[Connector] Console connected, starting status thread")
-            self._console_status_thread = ConsoleStatusThread(self)
-            self._console_status_thread.statusUpdate.connect(self.handleUpdateCapStatus)
-            self._console_status_thread.start()
-        elif not console_connected and console_was_connected and self._console_status_thread is not None:
-            # Console just disconnected, stop the thread
-            logger.info("[Connector] Console disconnected, stopping status thread")
-            self._console_status_thread.stop()
-            self._console_status_thread = None
-        self._leftSensorConnected = left_sensor_connected
-        self._rightSensorConnected = right_sensor_connected
-
-        if changed:
-            self.connectionStatusChanged.emit()
-        self.update_state()
-
     def _load_laser_params(self, config_dir):
         
         config_path = resource_path("config", "laser_params.json") if config_dir == "config" else Path(config_dir) / "laser_params.json"
@@ -377,10 +345,6 @@ class MOTIONConnector(QObject):
         self.signalDisconnected.emit(descriptor, port)
         self.connectionStatusChanged.emit() 
         self.update_state()
-    
-    @pyqtSlot()
-    def refreshConnections(self):
-        self._refresh_connections()
 
     @pyqtSlot(str, str)
     def on_data_received(self, descriptor, message):
