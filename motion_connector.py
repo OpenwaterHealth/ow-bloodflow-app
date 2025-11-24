@@ -317,6 +317,10 @@ class MOTIONConnector(QObject):
             self._rightSensorConnected = True
         elif descriptor.upper() == "CONSOLE":
             self._consoleConnected = True
+            if motion_interface.console.set_fan_speed(fan_speed=50):
+                logger.info("Console fan speed set to 50%")
+            else:
+                logger.error("Failed to set console fan speed")
             # Start console status thread when console connects
             if self._console_status_thread is None:
                 self._console_status_thread = ConsoleStatusThread(self)
@@ -1232,7 +1236,8 @@ class MOTIONConnector(QObject):
             viz._nmodules = nmodules
 
             if self._advanced_sensors:
-                fig = viz.plot(("contrast", "mean"))
+                # fig = viz.plot(("contrast", "mean"))
+                fig = viz.plot(("BFI", "BVI"))
             else:
                 fig = viz.plot(("BFI", "BVI"))
             plt.show(block=False)
