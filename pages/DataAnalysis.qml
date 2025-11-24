@@ -179,7 +179,10 @@ Rectangle {
                             elide: Text.ElideRight; Layout.fillWidth: true
                         }
                         Text { text: "Mask:"; color: "#BDC3C7"; font.pixelSize: 14 }
-                        Text { text: selected.maskHex ? ("0x" + selected.maskHex.toUpperCase()) : "-"; color: "white"; font.pixelSize: 14 }
+                        Text { 
+                            text: formatMasks(selected.leftMask, selected.rightMask)
+                            color: "white"; font.pixelSize: 14 
+                        }
 
                         // Row 3: Left file (above Right file)
                         Text { text: "Right File:"; color: "#BDC3C7"; font.pixelSize: 14 }
@@ -332,6 +335,21 @@ Rectangle {
         const y = ts.slice(0,4), m = ts.slice(4,6), d = ts.slice(6,8)
         const hh = ts.slice(9,11), mm = ts.slice(11,13), ss = ts.slice(13,15)
         return `${y}-${m}-${d} ${hh}:${mm}:${ss}`
+    }
+
+    function formatMasks(leftMask, rightMask) {
+        const left = leftMask ? "0x" + leftMask.toUpperCase() : ""
+        const right = rightMask ? "0x" + rightMask.toUpperCase() : ""
+        
+        if (left && right) {
+            return left + ", " + right
+        } else if (left) {
+            return left
+        } else if (right) {
+            return right
+        } else {
+            return "-"
+        }
     }
 
     // **Connections for MOTIONConnector signals**

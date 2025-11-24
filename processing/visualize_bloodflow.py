@@ -64,17 +64,29 @@ class VisualizeBloodflow:
     # --------------------------
     def compute(self) -> None:
         """Load CSV(s), compute BFI/BVI, keep results in members."""
-        # Don’t display the first ~20 frames at 40Hz by default
+        # Don't display the first ~20 frames at 40Hz by default
         self.t1 = max(self.t1, 0.5)
 
-        # read first module
-        histos, camera_inds, timept, temperature = self._readdata(self.left_csv)
-        nmodules = 1
-        ncameras_left = len(camera_inds)
-        sides = np.array(["left"] * ncameras_left)
+        # Determine which files we have
+        has_left = self.left_csv and self.left_csv.strip()
+        has_right = self.right_csv and self.right_csv.strip()
+        
+        if not has_left and not has_right:
+            raise ValueError("At least one CSV file (left or right) must be provided")
+        
+        # Read first available module
+        if has_left:
+            histos, camera_inds, timept, temperature = self._readdata(self.left_csv)
+            sides = np.array(["left"] * len(camera_inds))
+            nmodules = 1
+        else:
+            # Start with right if no left
+            histos, camera_inds, timept, temperature = self._readdata(self.right_csv)
+            sides = np.array(["right"] * len(camera_inds))
+            nmodules = 1
 
-        # maybe read second module
-        if self.right_csv:
+        # Maybe read second module
+        if has_left and has_right:
             histos2, camera_inds2, timept2, temperature2 = self._readdata(self.right_csv)
             histos = np.concatenate((histos, histos2), axis=0)
             camera_inds = np.concatenate((camera_inds, camera_inds2), axis=0)
@@ -206,22 +218,27 @@ class VisualizeBloodflow:
         ind1 = int(self.frequency_hz * t1)
         ind2 = int(self.frequency_hz * t2)
 
-        # Create a fixed 4x2 grid (4 camera positions, up to 2 modules)
-        fig, ax = plt.subplots(nrows=4, ncols=max(nmodules, 1), figsize=(12, 8), squeeze=False)
-
-        # Ensure we always have correct shape even for single module
-        if nmodules == 1 and ax.ndim == 1:
-            ax = ax.reshape(-1, 1)
+        # Determine which modules we actually have
+        has_left = any(self._sides[i] == "left" for i in range(len(camera_inds)))
+        has_right = any(self._sides[i] == "right" for i in range(len(camera_inds)))
+        
+        # Adjust number of columns based on what we have
+        ncols = 0
+        if has_left:
+            ncols += 1
+        if has_right:
+            ncols += 1
+        ncols = max(ncols, 1)  # At least 1 column
+        
+        # Create grid with appropriate number of columns
+        fig, ax = plt.subplots(nrows=4, ncols=ncols, figsize=(6 * ncols, 8), squeeze=False)
 
         # Birmingham mapping: camera position to subplot row
         position_to_row = {0: 0, 1: 2, 2: 3, 3: 1}  # Far sensor on top
         
-        # Track which cameras we've plotted per module
-        cameras_per_module = len(camera_inds) // max(nmodules, 1) if nmodules else len(camera_inds)
-        
         # Initialize all subplots as empty placeholders
         for row in range(4):
-            for col in range(max(nmodules, 1)):
+            for col in range(ncols):
                 ax[row, col].text(0.5, 0.5, 'No Data', 
                                 ha='center', va='center', 
                                 transform=ax[row, col].transAxes,
@@ -231,46 +248,71 @@ class VisualizeBloodflow:
                 ax[row, col].set_xticks([])
                 ax[row, col].set_yticks([])
 
-        # Plot actual camera data
-        for j in range(nmodules or 1):
-            for i in range(cameras_per_module):
-                ind_cam = cameras_per_module * j + i
-                if ind_cam >= len(camera_inds):
-                    break
+        # Group cameras by module to get sequential positions per module
+        left_cams = [(ind, int(camera_inds[ind])) for ind in range(len(camera_inds)) if self._sides[ind] == "left"]
+        right_cams = [(ind, int(camera_inds[ind])) for ind in range(len(camera_inds)) if self._sides[ind] == "right"]
+        
+        # Plot actual camera data - iterate through all cameras using _sides array
+        for ind_cam in range(len(camera_inds)):
+            # Determine module (column) from _sides array
+            is_left = self._sides[ind_cam] == "left"
+            
+            # Map to column index based on what modules exist
+            if has_left and has_right:
+                module_col = 0 if is_left else 1
+            elif has_left:
+                module_col = 0
+            else:  # has_right only
+                module_col = 0
+                
+            if module_col >= ncols:
+                continue
                     
-                cam_id = int(camera_inds[ind_cam])
-                # Map camera ID to subplot row using Birmingham mapping
-                subplot_row = position_to_row.get(cam_id % 4, cam_id % 4)
-                
-                ax_mj = ax[subplot_row, j]
-                
-                # Clear the placeholder text
-                ax_mj.clear()
-                
-                # Plot the actual data
-                line1 = ax_mj.plot(t[ind1:ind2], x[ind_cam, ind1:ind2], 'k', linewidth=2, label=legend[0])
-                ax2 = ax_mj.twinx()
-                line2 = ax2.plot(t[ind1:ind2], y[ind_cam, ind1:ind2], 'r', linewidth=1, label=legend[1])
-                ax2.tick_params(axis='y', colors='red')
+            cam_id = int(camera_inds[ind_cam])
+            
+            # Map camera to sequential position within its module (0-3)
+            if is_left:
+                cam_position = next(i for i, (idx, _) in enumerate(left_cams) if idx == ind_cam)
+            else:
+                cam_position = next(i for i, (idx, _) in enumerate(right_cams) if idx == ind_cam)
+            
+            # Map position to subplot row using Birmingham mapping
+            subplot_row = position_to_row.get(cam_position, cam_position)
+            
+            ax_mj = ax[subplot_row, module_col]
+            
+            # Clear the placeholder text
+            ax_mj.clear()
+            
+            # Plot the actual data
+            line1 = ax_mj.plot(t[ind1:ind2], x[ind_cam, ind1:ind2], 'k', linewidth=2, label=legend[0])
+            ax2 = ax_mj.twinx()
+            line2 = ax2.plot(t[ind1:ind2], y[ind_cam, ind1:ind2], 'r', linewidth=1, label=legend[1])
+            ax2.tick_params(axis='y', colors='red')
 
-                # keep legacy inversion condition if someone passes ('contrast','mean')
-                if legend[0] == 'contrast':
-                    ax_mj.invert_yaxis()
-                if legend[1] == 'mean':
-                    ax2.invert_yaxis()
+            # keep legacy inversion condition if someone passes ('contrast','mean')
+            if legend[0] == 'contrast':
+                ax_mj.invert_yaxis()
+            if legend[1] == 'mean':
+                ax2.invert_yaxis()
 
-                lines = line1 + line2
-                labels = [l.get_label() for l in lines]
-                ax_mj.legend(lines, labels)
-                ax_mj.set_ylabel(f'Camera {cam_id}')
+            lines = line1 + line2
+            labels = [l.get_label() for l in lines]
+            ax_mj.legend(lines, labels)
+            ax_mj.set_ylabel(f'Camera {cam_id}')
 
-        # Titles/labels
-        ax[0, 0].set_title('Left')
-        if ax.shape[1] > 1:
+        # Titles/labels based on what modules we have
+        if has_left and has_right:
+            ax[0, 0].set_title('Left')
             ax[0, 1].set_title('Right')
-        ax[-1, 0].set_xlabel('Time (s)')
-        if ax.shape[1] > 1:
+            ax[-1, 0].set_xlabel('Time (s)')
             ax[-1, 1].set_xlabel('Time (s)')
+        elif has_left:
+            ax[0, 0].set_title('Left')
+            ax[-1, 0].set_xlabel('Time (s)')
+        else:  # has_right only
+            ax[0, 0].set_title('Right')
+            ax[-1, 0].set_xlabel('Time (s)')
 
         fig.tight_layout()
         return fig
@@ -361,8 +403,8 @@ class VisualizeBloodflow:
 # --------------------------
 def _build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Compute and visualize BFI/BVI from histogram CSVs.")
-    p.add_argument("--left", required=True, help="Left module CSV file")
-    p.add_argument("--right", help="Right module CSV file (optional)")
+    p.add_argument("--left", help="Left module CSV file (at least one of --left or --right required)")
+    p.add_argument("--right", help="Right module CSV file (at least one of --left or --right required)")
     p.add_argument("--t1", type=float, default=0.0, help="Start time (s), default 0.0")
     p.add_argument("--t2", type=float, default=120.0, help="End time (s). If <= t1 or 0, uses full duration")
     p.add_argument("--freq", type=int, default=40, help="Frame rate Hz (default 40)")
@@ -375,6 +417,11 @@ def _build_argparser() -> argparse.ArgumentParser:
 
 def main():
     args = _build_argparser().parse_args()
+    
+    # Validate that at least one file is provided
+    if not args.left and not args.right:
+        print("Error: At least one of --left or --right must be provided")
+        return 1
 
     viz = VisualizeBloodflow(
         left_csv=args.left,
