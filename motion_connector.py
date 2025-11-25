@@ -740,7 +740,6 @@ class MOTIONConnector(QObject):
     @pyqtSlot()
     def readSafetyStatus(self):
         # Replace this with your actual console status check
-        print("Reading safety status")
         try:
             muxIdx = 1
             i2cAddr = 0x41
@@ -789,9 +788,9 @@ class MOTIONConnector(QObject):
         """Send i2c read to device"""
         locker = QMutexLocker(self._i2c_mutex)  # Lock auto-released at function exit
         try:
-            logger.info(f"I2C Read Request -> target={target}, mux_idx={mux_idx}, channel={channel}, "
-                f"i2c_addr=0x{int(i2c_addr):02X}, offset=0x{int(offset):02X}, read_len={int(data_len)}"
-            )            
+            # logger.info(f"I2C Read Request -> target={target}, mux_idx={mux_idx}, channel={channel}, "
+                # f"i2c_addr=0x{int(i2c_addr):02X}, offset=0x{int(offset):02X}, read_len={int(data_len)}"
+            # )            
 
             if target == "CONSOLE":                
                 fpga_data, fpga_data_len = motion_interface.console_module.read_i2c_packet(mux_index=mux_idx, channel=channel, device_addr=i2c_addr, reg_addr=offset, read_len=data_len)
@@ -799,8 +798,8 @@ class MOTIONConnector(QObject):
                     logger.error(f"Read I2C Failed")
                     return []
                 else:
-                    logger.info(f"Read I2C Success")
-                    logger.info(f"Raw bytes: {fpga_data.hex(' ')}")  # Print as hex bytes separated by spaces
+                    # logger.info(f"Read I2C Success")
+                    # logger.info(f"Raw bytes: {fpga_data.hex(' ')}")  # Print as hex bytes separated by spaces
                     return list(fpga_data[:fpga_data_len]) 
                 
             elif target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":
