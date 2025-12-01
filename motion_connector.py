@@ -1,4 +1,4 @@
-from PyQt6.QtCore import QObject, pyqtSignal, pyqtProperty, pyqtSlot, QVariant, QThread, QWaitCondition, QMutex, QMutexLocker
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtProperty, pyqtSlot, QVariant, QThread, QWaitCondition, QRecursiveMutex, QMutexLocker
 from typing import List
 from pathlib import Path
 import logging
@@ -87,7 +87,6 @@ class MOTIONConnector(QObject):
         self._config_thread = None
         self._laserOn = False
         self._safetyFailure = False
-        self._i2c_mutex = QMutex()
         self._running = False
         self._trigger_state = "OFF"
         self._state = DISCONNECTED
@@ -107,7 +106,11 @@ class MOTIONConnector(QObject):
         self._viz_worker = None
         self._console_status_thread = None
 
-
+        self._console_mutex = QRecursiveMutex()
+        
+        # Sensor mutexes for left and right sensors (following console mutex pattern)
+        self._left_sensor_mutex = QRecursiveMutex()
+        self._right_sensor_mutex = QRecursiveMutex()
 
         default_dir = os.path.join(os.getcwd(), "scan_data")
         os.makedirs(default_dir, exist_ok=True)
@@ -172,7 +175,7 @@ class MOTIONConnector(QObject):
             
     def set_laser_power_from_config(self, interface):
         logger.info("[Connector] Setting laser power from config...")
-        locker = QMutexLocker(self._i2c_mutex)  # Lock auto-released at function exit
+        self._console_mutex.lock()
         for idx, laser_param in enumerate(self.laser_params, start=1):
             muxIdx = laser_param["muxIdx"]
             channel = laser_param["channel"]
@@ -195,6 +198,7 @@ class MOTIONConnector(QObject):
                 logger.error(f"Failed to set laser power (muxIdx={muxIdx}, channel={channel})")
                 return False
         logger.info("Laser power set successfully.")
+        self._console_mutex.unlock()
         return True
         
     def connect_signals(self):
@@ -483,9 +487,9 @@ class MOTIONConnector(QObject):
         return trigger_setting or {}
     
     @pyqtSlot(str, result=bool)
-    def setTrigger(self, triggerjson):
-        locker = QMutexLocker(self._i2c_mutex)  # Lock auto-released at function exit
+    def setTrigger(self, triggerjson):  # Lock auto-released at function exit
         try:
+            self._console_mutex.lock()
             json_trigger_data = json.loads(triggerjson)
             
             trigger_setting = motion_interface.console_module.set_trigger_json(data=json_trigger_data)
@@ -507,10 +511,13 @@ class MOTIONConnector(QObject):
         except Exception as e:
             logger.error(f"Unexpected error while setting trigger: {e}")
             return False
-            
+        finally:
+            self._console_mutex.unlock()
     @pyqtSlot(result=bool)
     def startTrigger(self):
+        self._console_mutex.lock()
         success = motion_interface.console_module.start_trigger()
+        self._console_mutex.unlock()
         if success:
             self._trigger_state = "ON"
             self.triggerStateChanged.emit()
@@ -519,7 +526,9 @@ class MOTIONConnector(QObject):
         
     @pyqtSlot()
     def stopTrigger(self):
+        self._console_mutex.lock()
         motion_interface.console_module.stop_trigger()
+        self._console_mutex.unlock()
         self._trigger_state = "OFF"
         self.triggerStateChanged.emit()        
         logger.info("Trigger stopped.")   
@@ -787,7 +796,7 @@ class MOTIONConnector(QObject):
     @pyqtSlot(str, int, int, int, int, int, result=QVariant)
     def i2cReadBytes(self, target: str, mux_idx: int, channel: int, i2c_addr: int, offset: int, data_len: int):
         """Send i2c read to device"""
-        locker = QMutexLocker(self._i2c_mutex)  # Lock auto-released at function exit
+        self._console_mutex.lock()  # Lock auto-released at function exit
         try:
             # logger.info(f"I2C Read Request -> target={target}, mux_idx={mux_idx}, channel={channel}, "
                 # f"i2c_addr=0x{int(i2c_addr):02X}, offset=0x{int(offset):02X}, read_len={int(data_len)}"
@@ -809,6 +818,8 @@ class MOTIONConnector(QObject):
         except Exception as e:
             logger.error(f"Error sending i2c read command: {e}")
             return []
+        finally:
+            self._console_mutex.unlock()
 
     @pyqtSlot(result=list)
     def get_scan_list(self):
@@ -946,6 +957,7 @@ class MOTIONConnector(QObject):
             right_path = ""
 
             try:
+                self._console_mutex.lock()
                 ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 logger.info("Preparing capture…")
                 self.captureLog.emit("Preparing capture…")
@@ -1083,7 +1095,7 @@ class MOTIONConnector(QObject):
                 self._capture_running = False
                 self._capture_thread = None
                 self.captureFinished.emit(ok, err, left_path, right_path)
-
+                self._console_mutex.unlock()
         # launch worker
         self._capture_thread = threading.Thread(target=_worker, daemon=True)
         self._capture_thread.start()
@@ -1098,11 +1110,13 @@ class MOTIONConnector(QObject):
         self._capture_stop.set()
         # also stop trigger ASAP
         try:
+            self._console_mutex.lock()
             self._interface.console_module.stop_trigger()
             self._trigger_state = "OFF"; self.triggerStateChanged.emit()
         except Exception:
             pass
-
+        finally:
+            self._console_mutex.unlock()
     
     # Fan control methods
     @pyqtSlot(str, bool, result=bool)
@@ -1442,7 +1456,6 @@ class ConsoleStatusThread(QThread):
         super().__init__(parent)
         self.connector = connector
         self._running = True
-        self._mutex = QMutex()
         self._wait_condition = QWaitCondition()
 
     def run(self):
@@ -1459,10 +1472,6 @@ class ConsoleStatusThread(QThread):
                     logger.error(f"Console status query failed: {e}")
                     self.statusUpdate.emit(f"Safety status read error: {e}")
 
-            # Sleep for exactly 1000ms, or until stop() wakes us
-            self._mutex.lock()
-            self._wait_condition.wait(self._mutex, 1000)
-            self._mutex.unlock()
 
     def stop(self):
         """Called from another thread to stop the thread gracefully."""
