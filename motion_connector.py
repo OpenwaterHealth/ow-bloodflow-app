@@ -109,8 +109,7 @@ class MOTIONConnector(QObject):
         self._console_mutex = QRecursiveMutex()
         
         # Sensor mutexes for left and right sensors (following console mutex pattern)
-        self._left_sensor_mutex = QRecursiveMutex()
-        self._right_sensor_mutex = QRecursiveMutex()
+        self._sensor_mutex = [QRecursiveMutex() , QRecursiveMutex()] # mutexes in [left,right] order
 
         default_dir = os.path.join(os.getcwd(), "scan_data")
         os.makedirs(default_dir, exist_ok=True)
@@ -277,7 +276,8 @@ class MOTIONConnector(QObject):
         except json.JSONDecodeError as e:
             logger.error(f"[Connector] Invalid JSON in {config_path}: {e}")
             return []
-        
+            
+    @pyqtSlot(result=list)
     def get_scan_list(self):
         """Return sorted list of scans like 'owABCD12_YYYYMMDD_HHMMSS'."""
         base_path = Path(self._directory)
@@ -810,7 +810,7 @@ class MOTIONConnector(QObject):
     @pyqtSlot(int, int)
     def startConfigureCameraSensors(self, left_camera_mask:int, right_camera_mask:int):
         if self._config_thread: return
-        w = _ConfigureWorker(self._interface, left_camera_mask, right_camera_mask)
+        w = _ConfigureWorker(self._interface, self._sensor_mutex, left_camera_mask, right_camera_mask)
         w.progress.connect(self.configProgress.emit)
         w.log.connect(self.configLog.emit)
         w.finished.connect(self._on_config_finished)
@@ -825,63 +825,6 @@ class MOTIONConnector(QObject):
         if self._config_thread:
             self._config_thread.quit(); self._config_thread.wait(2000); self._config_thread = None
         self.configFinished.emit(ok, err)
-
-    @pyqtSlot(int, int, result=bool)
-    def configureCameraSensors(self, left_camera_mask: int, right_camera_mask:int) -> bool:
-        """
-        Programs the FPGA on each selected camera and configures sensor registers.
-        left_camera_mask: left sensor bitmask over 8 camera positions (bit 0 => position 1, etc.)
-        Returns True on full success, False if any step fails.
-        """
-        logger.info(f"[Connector] configureCameraSensors called with mask=0x{left_camera_mask:02X}")
-        try:
-            start_time = time.time()
-            interface = self._interface  # motion_interface singleton
-
-            # Turn mask into positions [0..7] (bits set)
-            camera_positions = [i for i in range(8) if (left_camera_mask & (1 << i))]
-            if not camera_positions:
-                logger.error("configureCameraSensors: left_camera_mask is empty (0).")
-                return False
-
-            for pos in camera_positions:
-                cam_mask_single = 1 << pos
-                logger.info(f"Programming camera FPGA at position {pos + 1} (mask 0x{cam_mask_single:02X})…")
-
-                # 1) Program FPGA
-                results = interface.run_on_sensors(
-                    "program_fpga",
-                    camera_position=cam_mask_single,
-                    manual_process=False
-                )
-                # Expecting a dict like {"left": True/False, "right": True/False}
-                if isinstance(results, dict):
-                    for side, success in results.items():
-                        if not success:
-                            logger.error(f"Failed to program FPGA on {side} sensor (pos {pos+1}).")
-                            return False
-                elif results is not True:
-                    logger.error(f"program_fpga returned unexpected result: {results!r}")
-                    return False
-
-                # 2) Configure camera sensor registers
-                logger.info(f"Configuring camera sensor registers at position {pos + 1}…")
-                cfg_res = interface.run_on_sensors(
-                    "camera_configure_registers",
-                    camera_position=cam_mask_single
-                )
-                # Many backends return dict/bool; treat Falsey as failure
-                if not cfg_res:
-                    logger.error(f"camera_configure_registers failed at position {pos + 1}: {cfg_res!r}")
-                    return False
-
-            elapsed_ms = (time.time() - start_time) * 1000.0
-            logger.info(f"FPGAs programmed & registers configured | Time: {elapsed_ms:.2f} ms")
-            return True
-
-        except Exception as e:
-            logger.exception(f"configureCameraSensors error: {e}")
-            return False
 
     @pyqtSlot(str)
     def querySensorAccelerometer (self, target: str):
@@ -903,18 +846,27 @@ class MOTIONConnector(QObject):
             if sensor is None:
                 logger.error(f"{sensor_tag.capitalize()} sensor object is None")
                 return
-                
+            self._sensor_mutex[sensor_tag == "right"].lock()    
             accel = sensor.imu_get_accelerometer()
+            self._sensor_mutex[sensor_tag == "right"].unlock()
             logger.info(f"Accel (raw): X={accel[0]}, Y={accel[1]}, Z={accel[2]}")
             self.accelerometerSensorUpdated.emit(accel[0], accel[1], accel[2])
         except Exception as e:
             logger.error(f"Error querying Accelerometer data: {e}")
 
     @pyqtSlot()
-    def querySensorGyroscope (self):
+    def querySensorGyroscope (self, target: str):
         """Fetch and emit Gyroscope data."""
         try:
-            gyro  = motion_interface.sensors["left"].imu_get_gyroscope()
+            if target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":                
+                sensor_tag = "left" if target == "SENSOR_LEFT" else "right"
+            else:
+                logger.error(f"Invalid target for sensor info query: {target}")
+                return
+
+            self._sensor_mutex[sensor_tag=="right"].lock()
+            gyro  = motion_interface.sensors[sensor_tag].imu_get_gyroscope()
+            self._sensor_mutex[sensor_tag=="right"].unlock()
             logger.info(f"Gyro  (raw): X={gyro[0]}, Y={gyro[1]}, Z={gyro[2]}")
             self.gyroscopeSensorUpdated.emit(gyro[0], gyro[1], gyro[2])
         except Exception as e:
@@ -932,13 +884,16 @@ class MOTIONConnector(QObject):
                     logger.error(f"Failed to send Software Reset")
             elif target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":
                 sensor_tag = "left" if target == "SENSOR_LEFT" else "right"                    
+                self._sensor_mutex[sensor_tag=="right"].lock()
                 if motion_interface.sensors[sensor_tag].soft_reset():
                     logger.info(f"Software Reset Sent")
                 else:
                     logger.error(f"Failed to send Software Reset")
         except Exception as e:
             logger.error(f"Error Sending Software Reset: {e}")
-
+        finally:
+            self._sensor_mutex[sensor_tag=="right"].unlock()
+    
     @pyqtSlot(str)
     def querySensorTemperature(self, target: str):
         """Fetch and emit Temperature data."""
@@ -1348,12 +1303,14 @@ class _ConfigureWorker(QThread):
     progress = pyqtSignal(int)
     log = pyqtSignal(str)
     finished = pyqtSignal(bool, str)
-    def __init__(self, interface, left_camera_mask:int, right_camera_mask:int):
+    def __init__(self, interface, _sensor_mutex, left_camera_mask:int, right_camera_mask:int):
         super().__init__()
         self.interface = interface
+        self._sensor_mutex = _sensor_mutex
         self.left_camera_mask = left_camera_mask
         self.right_camera_mask = right_camera_mask
         self._stop = False
+
     def stop(self): self._stop = True
 
     def run(self):
@@ -1385,7 +1342,7 @@ class _ConfigureWorker(QThread):
 
             cam_mask_single = 1 << pos
             pos1 = pos + 1  # human-friendly position
-
+            self._sensor_mutex[side=="right"].lock()
             # 1) Program FPGA
             msg = f"Programming {side} camera FPGA at position {pos1} (mask 0x{cam_mask_single:02X})…"
             logger.info(msg)
@@ -1448,6 +1405,8 @@ class _ConfigureWorker(QThread):
 
             done += 1
             self.progress.emit(int(5 + (done / total) * 15))
+
+            self._sensor_mutex[side=="right"].unlock()
 
         logger.info("FPGAs programmed & registers configured")
         self.finished.emit(True, "")
