@@ -172,6 +172,7 @@ class MOTIONConnector(QObject):
             
     def set_laser_power_from_config(self, interface):
         logger.info("[Connector] Setting laser power from config...")
+        locker = QMutexLocker(self._i2c_mutex)  # Lock auto-released at function exit
         for idx, laser_param in enumerate(self.laser_params, start=1):
             muxIdx = laser_param["muxIdx"]
             channel = laser_param["channel"]
@@ -317,7 +318,7 @@ class MOTIONConnector(QObject):
             self._rightSensorConnected = True
         elif descriptor.upper() == "CONSOLE":
             self._consoleConnected = True
-            if motion_interface.console.set_fan_speed(fan_speed=50):
+            if motion_interface.console_module.set_fan_speed(fan_speed=50):
                 logger.info("Console fan speed set to 50%")
             else:
                 logger.error("Failed to set console fan speed")
@@ -483,6 +484,7 @@ class MOTIONConnector(QObject):
     
     @pyqtSlot(str, result=bool)
     def setTrigger(self, triggerjson):
+        locker = QMutexLocker(self._i2c_mutex)  # Lock auto-released at function exit
         try:
             json_trigger_data = json.loads(triggerjson)
             
@@ -757,8 +759,7 @@ class MOTIONConnector(QObject):
                 if status:
                     statuses[label] = status[0]                
                 else:
-                    print("I2C read error")
-                    raise Exception("I2C read error")
+                    raise Exception("readSafetyStatus error (I2C read error)")
                 
             status_text = f"SE: 0x{statuses['SE']:02X}, SO: 0x{statuses['SO']:02X}"
             if (statuses["SE"] & 0x0F) == 0 and (statuses["SO"] & 0x0F) == 0:
@@ -795,7 +796,7 @@ class MOTIONConnector(QObject):
             if target == "CONSOLE":                
                 fpga_data, fpga_data_len = motion_interface.console_module.read_i2c_packet(mux_index=mux_idx, channel=channel, device_addr=i2c_addr, reg_addr=offset, read_len=data_len)
                 if fpga_data is None or fpga_data_len == 0:
-                    logger.error(f"Read I2C Failed")
+                    logger.error(f"readI2CBytes failed (I2C read error)")
                     return []
                 else:
                     # logger.info(f"Read I2C Success")
