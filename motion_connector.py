@@ -442,7 +442,6 @@ class MOTIONConnector(QObject):
             right_path = ""
 
             try:
-                self._console_mutex.lock()
                 ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 logger.info("Preparing capture…")
                 self.captureLog.emit("Preparing capture…")
@@ -452,7 +451,9 @@ class MOTIONConnector(QObject):
                     logger.info("Enabling external frame sync…")
                     self.captureLog.emit("Enabling external frame sync…")
                     for side, _, _ in active_sides:
+                        self._sensor_mutex[side=="right"].lock()
                         res = interface.run_on_sensors("enable_camera_fsin_ext", target=side)
+                        self._sensor_mutex[side=="right"].unlock()
                         if not _ok_from_result(res, side):
                             logger.error(f"Failed to enable external frame sync on {side}.")
                             err = f"Failed to enable external frame sync on {side}."
@@ -463,7 +464,9 @@ class MOTIONConnector(QObject):
                 logger.info("Enabling cameras…")
                 self.captureLog.emit("Enabling cameras…")
                 for side, mask, _ in active_sides:
+                    self._sensor_mutex[side=="right"].lock()
                     res = interface.run_on_sensors("enable_camera", mask, target=side)
+                    self._sensor_mutex[side=="right"].unlock()
                     if not _ok_from_result(res, side):
                         logger.error(f"Failed to enable camera on {side} (mask 0x{mask:02X}).")
                         err = f"Failed to enable camera on {side} (mask 0x{mask:02X})."
@@ -506,10 +509,13 @@ class MOTIONConnector(QObject):
 
                 # Start trigger (once)
                 self.captureLog.emit("Starting trigger…")
+                self._console_mutex.lock()
                 if not interface.console_module.start_trigger():
                     err = "Failed to start trigger."
                     self.captureLog.emit(err)
+                    self._console_mutex.unlock()
                     raise RuntimeError(err)
+                self._console_mutex.unlock()
                 self._trigger_state = "ON"
                 self.triggerStateChanged.emit()
 
@@ -529,7 +535,9 @@ class MOTIONConnector(QObject):
                 # Stop trigger (once)
                 self.captureLog.emit("Stopping trigger…")
                 try:
+                    self._console_mutex.lock()
                     interface.console_module.stop_trigger()
+                    self._console_mutex.unlock()
                 finally:
                     self._trigger_state = "OFF"
                     self.triggerStateChanged.emit()
@@ -538,8 +546,9 @@ class MOTIONConnector(QObject):
                 # Disable cameras per active side
                 self.captureLog.emit("Disabling cameras…")
                 for side, mask, _ in active_sides:
+                    self._sensor_mutex[side=="right"].lock()
                     res = interface.run_on_sensors("disable_camera", mask, target=side)
-                    print( res)
+                    self._sensor_mutex[side=="right"].unlock()
                     if not _ok_from_result(res, side):
                         self.captureLog.emit(f"Failed to disable camera on {side} (mask 0x{mask:02X}).")
                 # Stop sensor streaming
@@ -580,6 +589,8 @@ class MOTIONConnector(QObject):
                 self._capture_running = False
                 self._capture_thread = None
                 self.captureFinished.emit(ok, err, left_path, right_path)
+                self._sensor_mutex[0].unlock()  # unlock all mutexes at end of capture (should be already unlocked)
+                self._sensor_mutex[1].unlock()
                 self._console_mutex.unlock()
         # launch worker
         self._capture_thread = threading.Thread(target=_worker, daemon=True)
