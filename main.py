@@ -7,11 +7,13 @@ import logging
 
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication   
+from PyQt6.QtWidgets import QApplication   
 from PyQt6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
 from qasync import QEventLoop
 
 from motion_connector import MOTIONConnector
 from pathlib import Path
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.ERROR)  # or INFO depending on what you want to see
@@ -25,10 +27,12 @@ def resource_path(rel: str) -> str:
     return os.path.join(base, rel)
 
 
+
 def main():
     os.environ["QT_QUICK_CONTROLS_STYLE"] = "Material"
     os.environ["QT_QUICK_CONTROLS_MATERIAL_THEME"] = "Dark"
     os.environ["QT_LOGGING_RULES"] = "qt.qpa.fonts=false"
+
 
     # --- parse flags ignore unknown (Qt) flags ---
     parser = argparse.ArgumentParser(add_help=False)
@@ -38,6 +42,22 @@ def main():
     app = QApplication(sys.argv) 
 
     # Set the global application icon
+    icon_path = resource_path("assets/images/favicon.ico")
+    app.setWindowIcon(QIcon(icon_path))
+    
+    # Set application properties for Windows taskbar
+    app.setApplicationName("OpenWater Bloodflow")
+    app.setApplicationVersion("0.3.8f")
+    app.setOrganizationName("OpenWater Health")
+    
+    # Windows-specific: Set application user model ID for proper taskbar grouping
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("OpenWaterHealth.BloodflowApp.0.3.8f")
+        except Exception:
+            pass  # Ignore if not available
+    
     icon_path = resource_path("assets/images/favicon.ico")
     app.setWindowIcon(QIcon(icon_path))
     

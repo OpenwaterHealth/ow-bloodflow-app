@@ -191,10 +191,12 @@ class MOTIONConnector(QObject):
             self._rightSensorConnected = True
         elif descriptor.upper() == "CONSOLE":
             self._consoleConnected = True
+            self._console_mutex.lock()
             if motion_interface.console_module.set_fan_speed(fan_speed=50):
                 logger.info("Console fan speed set to 50%")
             else:
                 logger.error("Failed to set console fan speed")
+            self._console_mutex.unlock()
             # Start console status thread when console connects
             if self._console_status_thread is None:
                 self._console_status_thread = ConsoleStatusThread(self)
@@ -317,13 +319,19 @@ class MOTIONConnector(QObject):
         left  = next(base.glob(f"scan_{scan_id}_left_mask*.csv"), None)
         right = next(base.glob(f"scan_{scan_id}_right_mask*.csv"), None)
 
-        mask = ""
-        for p in (left, right):
-            if p:
-                m = re.search(r"_mask([0-9A-Fa-f]+)\.csv$", p.name)
-                if m:
-                    mask = m.group(1)
-                    break
+        # Extract mask from each file separately
+        left_mask = ""
+        right_mask = ""
+        
+        if left:
+            m = re.search(r"_mask([0-9A-Fa-f]+)\.raw$", left.name)
+            if m:
+                left_mask = m.group(1)
+        
+        if right:
+            m = re.search(r"_mask([0-9A-Fa-f]+)\.raw$", right.name)
+            if m:
+                right_mask = m.group(1)
 
         notes = ""
         try:
@@ -334,7 +342,8 @@ class MOTIONConnector(QObject):
         return {
             "subjectId": subject,
             "timestamp": ts,
-            "maskHex": mask,
+            "leftMask": left_mask,
+            "rightMask": right_mask,
             "leftPath": str(left) if left else "",
             "rightPath": str(right) if right else "",
             "notesPath": str(notes_path),
@@ -1111,6 +1120,7 @@ class MOTIONConnector(QObject):
             viz._mean = mean
             viz._camera_inds = camera_inds
             viz._nmodules = nmodules
+            viz._sides = payload.get("sides", [])
 
             if self._advanced_sensors:
                 # fig = viz.plot(("contrast", "mean"))
@@ -1310,18 +1320,18 @@ class _VizWorker(QObject):
             viz = VisualizeBloodflow(left_path, right_path, t1=self.t1, t2=self.t2)
             viz.compute()       
 
-            # Save results CSV based on left_csv naming rule            
-            new_file_name = re.sub(r"_left.*\.csv$", "_bfi_results.csv", left_path)
-            if not new_file_name.endswith("_bfi_results.csv"):
-                # Fallback if pattern doesn't match (e.g., right-only file)
-                base = os.path.splitext(left_path)[0]
-                new_file_name = f"{base}_bfi_results.csv"
+            # Save results CSV based on left_csv or right_csv naming rule
+            if self.left_csv:
+                new_file_name = re.sub(r"_left.*\.csv$", "_bfi_results.csv", self.left_csv)
+            else:
+                new_file_name = re.sub(r"_right.*\.csv$", "_bfi_results.csv", self.right_csv)
             viz.save_results_csv(new_file_name)
             logger.info(f"Results CSV saved to: {new_file_name}")
 
             bfi, bvi, cam_inds, contrast, mean = viz.get_results()
             payload = {"bfi": bfi, "bvi": bvi, "camera_inds": cam_inds, "contrast": contrast, "mean": mean,
-                       "nmodules": 2 if right_path else 1,
+                       "nmodules": 2 if self.right_csv else 1,
+                       "sides": viz._sides,
                        "freq": viz.frequency_hz, "t1": viz.t1, "t2": viz.t2}
             self.resultsReady.emit(payload)
             self.finished.emit()
