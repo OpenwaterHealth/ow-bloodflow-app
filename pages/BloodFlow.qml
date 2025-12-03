@@ -29,7 +29,7 @@ Rectangle {
         ListElement { name: "Outer";  maskHex: "0x99" }  
         ListElement { name: "Left";  maskHex: "0x0F" }  
         ListElement { name: "Right";  maskHex: "0xF0" }  
-        ListElement { name: "All";  maskHex: "0xFF" }  
+        // ListElement { name: "All";  maskHex: "0xFF" }  
     }
 
     // Convert to mask
@@ -281,13 +281,14 @@ Rectangle {
                                     case 4: leftSensorView.sensorActive = [true,false,false,true,true,false,false,true]; break;  // 0x99
                                     case 5: leftSensorView.sensorActive = [false,false,false,false,true,true,true,true]; break;  // 0x0F
                                     case 6: leftSensorView.sensorActive = [true,true,true,true,false,false,false,false]; break;  // 0xF0
-                                    case 7: leftSensorView.sensorActive = [true,true,true,true,true,true,true,true]; break;  // 0xFF
+                                    // case 7: leftSensorView.sensorActive = [true,true,true,true,true,true,true,true]; break;  // 0xFF
                                 }
                             }
 
                             Component.onCompleted: {
                                 if (advancedSensors) {
-                                    currentIndex = 0    // default to "None"
+                                    currentIndex = 1    // default to "Near"
+                                    leftSensorView.sensorActive = [false,true,false,true,true,false,true,false] // 0x5A
                                 } else {
                                     currentIndex = 1    // default to "Near"
                                     // manually trigger case 1 if only one option
@@ -326,13 +327,13 @@ Rectangle {
                                     case 4: rightSensorView.sensorActive = [true,false,false,true,true,false,false,true]; break;  // 0x99
                                     case 5: rightSensorView.sensorActive = [false,false,false,false,true,true,true,true]; break;  // 0x0F
                                     case 6: rightSensorView.sensorActive = [true,true,true,true,false,false,false,false]; break;  // 0xF0
-                                    case 7: rightSensorView.sensorActive = [true,true,true,true,true,true,true,true]; break;  // 0xFF
+                                    // case 7: rightSensorView.sensorActive = [true,true,true,true,true,true,true,true]; break;  // 0xFF
                                 }                                
                             }
 
                             Component.onCompleted: {
                                 if (advancedSensors) {
-                                    currentIndex = 0    // default to "None"
+                                    currentIndex = 0    // default to "None"                                    
                                 } else {
                                     // manually trigger case 1 if only one option
                                     currentIndex = 1    // default to "Near"
@@ -344,7 +345,7 @@ Rectangle {
 
                     Component.onCompleted: {
                         // Force default selection handlers to run so sensorActive arrays are set
-                        leftSensorSelector.currentIndex = 0;
+                        leftSensorSelector.currentIndex = 1;
                         rightSensorSelector.currentIndex = 0;
                     }
                 }
@@ -508,7 +509,7 @@ Rectangle {
                 border.width: 2
 
                 // public duration value (seconds)
-                property int durationSec: 30
+                property int durationSec: 16
 
                 ColumnLayout {
                     anchors.fill: parent
@@ -650,9 +651,9 @@ Rectangle {
         }
         
         function onConnectionStatusChanged() {          
-            // Reset ComboBox to "None" when sensor disconnects
+            // Reset ComboBox to "Near" when sensor disconnects
             if (!MOTIONInterface.leftSensorConnected) {
-                leftSensorSelector.currentIndex = 0
+                leftSensorSelector.currentIndex = 1
             }
             if (!MOTIONInterface.rightSensorConnected) {
                 rightSensorSelector.currentIndex = 0
