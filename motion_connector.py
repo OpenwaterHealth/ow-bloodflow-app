@@ -694,18 +694,20 @@ class MOTIONConnector(QObject):
             if state not in valid_states:
                 logger.error(f"Invalid RGB state value: {state}")
                 return
-
+            self._console_mutex.lock()
             if motion_interface.console_module.set_rgb_led(state) == state:
                 logger.info(f"RGB state set to: {state}")
             else:
                 logger.error(f"Failed to set RGB state to: {state}")
         except Exception as e:
             logger.error(f"Error setting RGB state: {e}")
-
+        finally:
+            self._console_mutex.unlock()
     @pyqtSlot()
     def queryRGBState(self):
         """Fetch and emit RGB state."""
         try:
+            self._console_mutex.lock()
             state = motion_interface.console_module.get_rgb_led()
             state_text = {0: "Off", 1: "IND1", 2: "IND2", 3: "IND3"}.get(state, "Unknown")
 
@@ -713,10 +715,13 @@ class MOTIONConnector(QObject):
             self.rgbStateReceived.emit(state, state_text)  # Emit both values
         except Exception as e:
             logger.error(f"Error querying RGB state: {e}")
-
+        finally:
+            self._console_mutex.unlock()
     @pyqtSlot(result=QVariant)
     def queryTriggerConfig(self):
+        self._console_mutex.lock()
         trigger_setting = motion_interface.console_module.get_trigger_json()
+        self._console_mutex.unlock()
         if trigger_setting:
             if isinstance(trigger_setting, str):
                 updateTrigger = json.loads(trigger_setting)
@@ -889,6 +894,7 @@ class MOTIONConnector(QObject):
         try:
             
             if target == "CONSOLE":
+                self._console_mutex.lock()
                 if motion_interface.console_module.soft_reset():
                     logger.info(f"Software Reset Sent")
                 else:
@@ -904,6 +910,8 @@ class MOTIONConnector(QObject):
             logger.error(f"Error Sending Software Reset: {e}")
         finally:
             self._sensor_mutex[sensor_tag=="right"].unlock()
+            self._console_mutex.unlock()
+
     
     @pyqtSlot(str)
     def querySensorTemperature(self, target: str):
@@ -926,7 +934,9 @@ class MOTIONConnector(QObject):
                 logger.error(f"{sensor_tag.capitalize()} sensor object is None")
                 return
                 
+            self._sensor_mutex[sensor_tag=="right"].lock()
             imu_temp = sensor.imu_get_temperature()  
+            self._sensor_mutex[sensor_tag=="right"].unlock()
             logger.info(f"Temperature Data - IMU Temp: {imu_temp}")
             self.temperatureSensorUpdated.emit(imu_temp)
         except Exception as e:
@@ -961,7 +971,8 @@ class MOTIONConnector(QObject):
             logger.info(f"Sensor Device Info - Firmware: {fw_version}, Device ID: {device_id}")
         except Exception as e:
             logger.error(f"Error querying device info: {e}")
-
+        finally:
+            self._sensor_mutex[sensor_tag=="right"].unlock()
     # Fan control methods
     @pyqtSlot(str, bool, result=bool)
     def setFanControl(self, sensor_side: str, fan_on: bool) -> bool:
@@ -980,12 +991,16 @@ class MOTIONConnector(QObject):
                 if not self._leftSensorConnected:
                     logger.error("Left sensor not connected")
                     return False
+                self._sensor_mutex[0].lock()
                 result = self._interface.sensors["left"].set_fan_control(fan_on)
+                self._sensor_mutex[0].unlock()
             elif sensor_side.lower() == "right":
                 if not self._rightSensorConnected:
                     logger.error("Right sensor not connected")
                     return False
+                self._sensor_mutex[1].lock()
                 result = self._interface.sensors["right"].set_fan_control(fan_on)
+                self._sensor_mutex[1].unlock()
             else:
                 logger.error(f"Invalid sensor side: {sensor_side}")
                 return False
@@ -1017,12 +1032,16 @@ class MOTIONConnector(QObject):
                 if not self._leftSensorConnected:
                     logger.error("Left sensor not connected")
                     return False
+                self._sensor_mutex[0].lock()
                 status = self._interface.sensors["left"].get_fan_control_status()
+                self._sensor_mutex[0].unlock()
             elif sensor_side.lower() == "right":
                 if not self._rightSensorConnected:
                     logger.error("Right sensor not connected")
                     return False
+                self._sensor_mutex[1].lock()
                 status = self._interface.sensors["right"].get_fan_control_status()
+                self._sensor_mutex[1].unlock()
             else:
                 logger.error(f"Invalid sensor side: {sensor_side}")
                 return False
