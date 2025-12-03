@@ -110,36 +110,9 @@ QtObject {
             if (!ok) { runner._finish(false, err, "", ""); return }
             // Capture OK → Post-process
             runner._stage = "post"
-            stageUpdate("Post-processing…")
-            postTask.leftPath  = leftPath
-            postTask.rightPath = rightPath
-            postTask.run()
-        }
-    }
+                stageUpdate("Scan complete")
+                runner._finish(true, "")
 
-    // --- Post-process (raw → csv) ---
-    property PostProcessTask postTask: PostProcessTask {
-        connector: runner.connector
-        property var _wd: null
-        onStarted: {
-            // generous watchdog (depends on file size); adjust as needed
-            if (_wd) try { _wd.stop() } catch(e) {}
-            _wd = Qt.createQmlObject('import QtQuick 6.5; Timer { interval: 3600000; repeat: false }', postTask, "postWD")
-            _wd.triggered.connect(function() {
-                messageOut("Post-processing timed out.")
-                runner._finish(false, "Post-processing timed out", "", "")
-            })
-            _wd.start()
-        }
-        onProgress: function(pct) { progressUpdate(Math.max(95, Math.min(99, pct))) }
-        onLog: function(line) { messageOut(line) }
-        onFinished: function(ok, err, leftCsv, rightCsv) {
-            if (_wd) { try { _wd.stop() } catch(e) {} _wd = null }
-            if (!ok) { runner._finish(false, err, "", ""); return }
-            // All done
-            progressUpdate(100)
-            stageUpdate("Scan complete")
-            runner._finish(true, "", leftCsv, rightCsv)
         }
     }
 

@@ -261,7 +261,7 @@ Rectangle {
                                 dataAnalysis.visualizing = true
                                 const left  = selected.leftPath  || ""
                                 const right = selected.rightPath || ""
-                                const ok = MOTIONInterface.visualize_bloodflow(left, right, 0.0, 120.0)
+                                const ok = MOTIONInterface.visualize_bloodflow(left, right, 0.0, 0.0)
                                 if (!ok) {
                                     console.warn("visualize_bloodflow returned false")
                                     dataAnalysis.visualizing = false
