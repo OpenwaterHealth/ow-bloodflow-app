@@ -238,7 +238,7 @@ Rectangle {
 
                         Button {
                             id: btnVisualize
-                            text: "Visualize BFI/BFV"
+                            text: "Visualize BFI/BVI"
                             Layout.fillWidth: true
                             Layout.preferredHeight: 40
                             Layout.alignment: Qt.AlignHCenter 
