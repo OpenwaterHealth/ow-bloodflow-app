@@ -1063,8 +1063,8 @@ class MOTIONConnector(QObject):
             return False
 
 # --- BLOODFLOW VISUALIZATION / POST-PROCESSING METHODS ---
-    @pyqtSlot(str, str, float, float, result=bool)
-    def visualize_bloodflow(self, left_csv: str, right_csv: str, t1: float = 0.0, t2: float = 120.0) -> bool:
+    @pyqtSlot(str, str, float, float, bool, result=bool)
+    def visualize_bloodflow(self, left_csv: str, right_csv: str, t1: float = 0.0, t2: float = 120.0, plot_contrast: bool = False) -> bool:
         left_csv  = (left_csv or "").strip()
         right_csv = (right_csv or "").strip()
         if left_csv.lower().endswith(".raw"):  left_csv  = left_csv[:-4]  + ".csv"
@@ -1081,14 +1081,14 @@ class MOTIONConnector(QObject):
             self.errorOccurred.emit("\n\n".join(missing))
             return False
 
-        logger.info(f"Visualizing bloodflow: left_csv={left_csv}, right_csv={right_csv}, t1={t1}, t2={t2}")
+        logger.info(f"Visualizing bloodflow: left_csv={left_csv}, right_csv={right_csv}, t1={t1}, t2={t2}, plot_contrast={plot_contrast}")
 
         # start spinner
         self.visualizingChanged.emit(True)
 
         # start worker thread (compute only)
         self._viz_thread = QThread(self)
-        self._viz_worker = _VizWorker(left_csv, right_csv, t1, t2)
+        self._viz_worker = _VizWorker(left_csv, right_csv, t1, t2, plot_contrast)
         self._viz_worker.moveToThread(self._viz_thread)
 
         # --- connections when starting the worker ---
@@ -1121,10 +1121,10 @@ class MOTIONConnector(QObject):
             viz._camera_inds = camera_inds
             viz._nmodules = nmodules
             viz._sides = payload.get("sides", [])
+            plot_contrast = payload.get("plot_contrast", False)
 
-            if self._advanced_sensors:
-                # fig = viz.plot(("contrast", "mean"))
-                fig = viz.plot(("BFI", "BVI"))
+            if plot_contrast:
+                fig = viz.plot(("contrast", "mean"))
             else:
                 fig = viz.plot(("BFI", "BVI"))
             plt.show(block=False)
@@ -1292,12 +1292,13 @@ class _VizWorker(QObject):
     error = pyqtSignal(str)
     resultsReady = pyqtSignal(object)   # emits a dict with arrays/metadata
 
-    def __init__(self, left_csv, right_csv, t1, t2):
+    def __init__(self, left_csv, right_csv, t1, t2, plot_contrast=False):
         super().__init__()
         self.left_csv = left_csv
         self.right_csv = right_csv
         self.t1 = t1
         self.t2 = t2
+        self.plot_contrast = plot_contrast
 
     @pyqtSlot()
     def run(self):
@@ -1332,7 +1333,8 @@ class _VizWorker(QObject):
             payload = {"bfi": bfi, "bvi": bvi, "camera_inds": cam_inds, "contrast": contrast, "mean": mean,
                        "nmodules": 2 if self.right_csv else 1,
                        "sides": viz._sides,
-                       "freq": viz.frequency_hz, "t1": viz.t1, "t2": viz.t2}
+                       "freq": viz.frequency_hz, "t1": viz.t1, "t2": viz.t2,
+                       "plot_contrast": self.plot_contrast}
             self.resultsReady.emit(payload)
             self.finished.emit()
         except Exception as e:
