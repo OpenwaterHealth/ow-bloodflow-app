@@ -229,9 +229,12 @@ class VisualizeBloodflow:
         if has_right:
             ncols += 1
         ncols = max(ncols, 1)  # At least 1 column
+
+        #nrows is the number of elements in camera_inds
+        nrows = int(len(camera_inds)/2)
         
         # Create grid with appropriate number of columns
-        fig, ax = plt.subplots(nrows=4, ncols=ncols, figsize=(6 * ncols, 8), squeeze=False)
+        fig, ax = plt.subplots(nrows=nrows, ncols=ncols, figsize=(6 * ncols, 8), squeeze=False)
 
         # Birmingham mapping: camera position to subplot row
         position_to_row = {0: 0, 1: 2, 2: 3, 3: 1}  # Far sensor on top
