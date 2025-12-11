@@ -192,7 +192,7 @@ class MOTIONConnector(QObject):
         elif descriptor.upper() == "CONSOLE":
             self._consoleConnected = True
             self._console_mutex.lock()
-            if motion_interface.console_module.set_fan_speed(fan_speed=50):
+            if motion_interface.console_module.set_fan_speed(fan_speed=100):
                 logger.info("Console fan speed set to 50%")
             else:
                 logger.error("Failed to set console fan speed")
