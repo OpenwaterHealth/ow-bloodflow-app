@@ -1,4 +1,4 @@
-from PyQt6.QtCore import QObject, pyqtSignal, pyqtProperty, pyqtSlot, QVariant, QThread, QWaitCondition, QRecursiveMutex, QMutexLocker
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtProperty, pyqtSlot, QVariant, QThread, QWaitCondition, QMutex, QRecursiveMutex, QMutexLocker
 from typing import List
 from pathlib import Path
 import logging
@@ -19,14 +19,23 @@ from processing.data_processing import DataProcessor
 from utils.resource_path import resource_path
 import struct
 import numpy as np
+import pandas as pd
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)  # or INFO depending on what you want to see
 
-if not logger.hasHandlers():
-    ch = logging.StreamHandler()
-    ch.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s'))
-    logger.addHandler(ch)
+
+# constants for calculations
+SCALE_V = 0.0909
+SCALE_I = 0.25
+V_REF = 2.5
+R_1 = 18000 #(R221)
+R_2 = 8160  #(R224)
+R_3 = 51100 #(R225)
+
+
+# Global loggers - will be configured by _configure_logging method
+logger = None
+run_logger = None
+
 
 # Define system states
 DISCONNECTED = 0
@@ -72,11 +81,25 @@ class MOTIONConnector(QObject):
     postProgress = pyqtSignal(int)
     postLog = pyqtSignal(str)
     postFinished = pyqtSignal(bool, str, str, str)  # ok, err, leftCsv, rightCsv
+    
+    tcmChanged = pyqtSignal()
+    tclChanged = pyqtSignal()
+    pdcChanged = pyqtSignal()
+    pduMonChanged = pyqtSignal()
 
-    def __init__(self, config_dir="config", parent=None, advanced_sensors=False):
+    tecStatusChanged = pyqtSignal()
+    tecDacChanged = pyqtSignal()
+
+    def __init__(self, config_dir="config", parent=None, advanced_sensors=False, log_level=logging.INFO):
         super().__init__(parent)
         self._interface = motion_interface
         self._advanced_sensors = advanced_sensors
+        
+        # Configure logging with the provided level
+        self._configure_logging(log_level)
+
+        # Initialize CSV output directory to user's home directory
+        self._csv_output_directory = os.path.expanduser("~")
 
         # Check if console and sensor are connected
         console_connected, left_sensor_connected, right_sensor_connected = motion_interface.is_device_connected()
@@ -111,6 +134,26 @@ class MOTIONConnector(QObject):
         # Sensor mutexes for left and right sensors (following console mutex pattern)
         self._sensor_mutex = [QRecursiveMutex() , QRecursiveMutex()] # mutexes in [left,right] order
 
+        self._tcm = 0.0
+        self._tcl = 0.0
+        self._pdc = 0.0
+
+        self._tec_voltage   = 0.0
+        self._tec_temp      = 0.0
+        self._tec_monV      = 0.0
+        self._tec_monC      = 0.0
+        self._tec_good      = False
+
+        self._tec_dac       = 0.0
+
+        self._pdu_raws = [0] * 16
+        self._pdu_vals = [0.0] * 16
+
+        # --- per-trigger run log support ---
+        self._runlog_handler = None         # logging.FileHandler or None
+        self._runlog_path = None            # str or None
+        self._runlog_active = False         # bool
+
         default_dir = os.path.join(os.getcwd(), "scan_data")
         os.makedirs(default_dir, exist_ok=True)
         self._directory = default_dir
@@ -125,6 +168,181 @@ class MOTIONConnector(QObject):
             self._console_status_thread = ConsoleStatusThread(self)
             self._console_status_thread.statusUpdate.connect(self.handleUpdateCapStatus)
             self._console_status_thread.start()
+
+
+    def _configure_logging(self, log_level):
+        """Configure logging for motion_connector with the specified log level."""
+        global logger, run_logger
+        
+        # Get logger instance
+        logger = logging.getLogger("ow-testapp")
+        logger.setLevel(log_level)
+        
+        # Common formatter
+        formatter = logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s'
+        )
+        
+        # Configure handlers - ensure console output for debug messages
+        if not logger.hasHandlers():
+            # Check if root logger has handlers (main.py configured logging)
+            root_logger = logging.getLogger()
+            if root_logger.handlers:
+                # Let messages propagate to root logger (main.py handles console/file output)
+                logger.propagate = True
+            else:
+                # No root handlers, set up our own console handler
+                console_handler = logging.StreamHandler()
+                console_handler.setLevel(log_level)
+                console_handler.setFormatter(formatter)
+                logger.addHandler(console_handler)
+
+                # Also add file handler for local logging
+                run_dir = os.path.join(os.getcwd(), "app-logs")
+                os.makedirs(run_dir, exist_ok=True)
+
+                # Build timestamp like 20251029_124455
+                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+                # ow-testapp-<ts>.log
+                logfile_path = os.path.join(run_dir, f"ow-testapp-{ts}.log")
+
+                file_handler = logging.FileHandler(logfile_path, mode='w', encoding='utf-8')
+                file_handler.setLevel(log_level)
+                file_handler.setFormatter(formatter)
+                logger.addHandler(file_handler)
+
+                # Optional: announce where we're logging
+                logger.info(f"logging to {logfile_path}")
+
+        # Run logger (ONLY writes to run.log, no console spam)
+        run_logger = logging.getLogger("runlog")
+        run_logger.setLevel(log_level)
+        run_logger.propagate = False
+
+        # --- Load RT model (10K3CG_R-T.CSV) for TEC lookup ---
+        try:
+            # Look for file in the repository's models directory next to this file
+            base_dir = os.path.dirname(__file__)
+            candidate = os.path.join(base_dir, "models", "10K3CG_R-T.CSV")
+            if not os.path.exists(candidate):
+                # try lower-case extension variant
+                candidate = os.path.join(base_dir, "models", "10K3CG_R-T.csv")
+
+            if os.path.exists(candidate):
+                df = pd.read_csv(candidate)
+                self._data_RT = np.array(df)
+                logger.info(f"Loaded RT model from {candidate} shape={self._data_RT.shape}")
+            else:
+                self._data_RT = None
+                logger.warning(f"RT model file not found at {candidate}")
+        except Exception as e:
+            self._data_RT = None
+            logger.error(f"Failed to load RT model: {e}")
+
+        
+    def _start_runlog(self):
+        """
+        Create a dedicated run log file and attach it to the global logger
+        so that all logger.info / logger.error etc. also go into this file
+        while the trigger is running.
+        """
+        if self._runlog_active:
+            # Already running; nothing to do
+            return
+
+        # Directory for individual trigger runs
+        run_dir = os.path.join(os.getcwd(), "run-logs")
+        os.makedirs(run_dir, exist_ok=True)
+
+        # Timestamped filename for this specific trigger session
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._runlog_path = os.path.join(run_dir, f"run-{ts}.log")
+
+        # Create handler
+        run_handler = logging.FileHandler(self._runlog_path,
+                                          mode='w',
+                                          encoding='utf-8')
+        # Match the global formatter you already defined at top of file
+        run_handler.setFormatter(logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s'
+        ))
+
+        run_handler.setLevel(logging.INFO)
+
+        # Attach this handler to run_logger ONLY
+        run_logger.addHandler(run_handler)
+
+        # Save so we can remove/close it later
+        self._runlog_handler = run_handler
+        self._runlog_active = True
+
+        # --- Gather version info for header ---
+        # SDK version (MOTION SDK / sensor SDK)
+        try:
+            sdk_ver = self._interface.get_sdk_version()  # same as get_sdk_version() slot :contentReference[oaicite:4]{index=4}
+        except Exception as e:
+            sdk_ver = f"ERROR({e})"
+
+        # App version (from constant we defined at top)
+        try:
+            app_ver = "1.2.6" #TODO: need to read this from main
+        except Exception as e:
+            app_ver = f"ERROR({e})"
+
+        # Console firmware version (from console module) :contentReference[oaicite:5]{index=5}
+        try:
+            # _console_mutex is a QRecursiveMutex so re-locking is safe if we're already in startTrigger
+            self._console_mutex.lock()
+            try:
+                fw_ver = motion_interface.console_module.get_version()
+            finally:
+                self._console_mutex.unlock()
+        except Exception as e:
+            fw_ver = f"ERROR({e})"
+
+        #
+        # Write session header into the run log
+        #
+        run_logger.info("========== RUN START ==========")
+        run_logger.info(f"App Version: {app_ver}")
+        run_logger.info(f"SDK Version: {sdk_ver}")
+        run_logger.info(f"Console Firmware: {fw_ver}")
+        run_logger.info("================================")
+
+        # Also drop a breadcrumb to the main logger so humans see it in console/UI log:
+        logger.info(f"[RUNLOG] started -> {self._runlog_path}")
+
+    def _stop_runlog(self):
+        """
+        Detach and close the per-run file handler.
+        """
+        if not self._runlog_active or self._runlog_handler is None:
+            return
+
+        # Mark end of run in the run log
+        run_logger.info(f"[RUNLOG] Trigger run logging stopped -> {self._runlog_path}")
+        run_logger.info("========== RUN END ==========")
+
+        # Also note it in the main logger (console/app log)
+        logger.info(f"[RUNLOG] stopped -> {self._runlog_path}")
+
+        # 1. Remove handler from run_logger
+        try:
+            run_logger.removeHandler(self._runlog_handler)
+        except Exception as e:
+            logger.error(f"Error detaching run log handler: {e}")
+
+        # 2. Close the handler so the file is flushed and released
+        try:
+            self._runlog_handler.close()
+        except Exception as e:
+            logger.error(f"Error closing run log handler: {e}")
+
+        # 3. Clear state
+        self._runlog_handler = None
+        self._runlog_path = None
+        self._runlog_active = False
 
 # --- GETTERS/SETTERS FOR Qt PROPERTIES ---
     def getSubjectId(self) -> str:
@@ -524,6 +742,11 @@ class MOTIONConnector(QObject):
                     self.captureLog.emit(err)
                     self._console_mutex.unlock()
                     raise RuntimeError(err)
+                
+                # Start the per-run log now
+                self._start_runlog()
+                logger.info("TRIGGER STARTED")
+                
                 self._console_mutex.unlock()
                 self._trigger_state = "ON"
                 self.triggerStateChanged.emit()
@@ -623,6 +846,117 @@ class MOTIONConnector(QObject):
         finally:
             self._console_mutex.unlock()
     
+    @pyqtSlot(result=QVariant)
+    def tec_status(self):
+        """
+        Returns a dict suitable for QML:
+        On error: { ok: False, error: "..." }
+        """
+
+        self._console_mutex.lock()
+        try:
+            v, i, p, t, ok = motion_interface.console_module.tec_status()
+
+            R_TH = 1/((float(v) / (V_REF/2*R_3)) - 1/R_3 + 1/R_1) - R_2
+            Thermistor_Temp = np.interp(R_TH, self._data_RT[:,1][::-1], self._data_RT[:,0][::-1])
+
+            
+            R_SET = 1/((float(i) / (V_REF/2*R_3)) - 1/R_3 + 1/R_1) - R_2
+            SET_Temp = np.interp(R_SET, self._data_RT[:,1][::-1], self._data_RT[:,0][::-1])
+
+            self._tec_voltage   = round(float(Thermistor_Temp), 2)
+            self._tec_temp      = round(float(SET_Temp), 2)
+            self._tec_monC      = round(float(p), 3)
+            self._tec_monV      = round(float(t), 3)
+            self._tec_good      = bool(ok)
+
+            # Long-run health sample -> goes ONLY to run.log
+                
+            run_logger.info(
+                "TEC Status -  temp: %.2f set: %.2f tec_c: %.3f tec_v: %.3f good: %s",
+                self._tec_voltage, self._tec_temp, float(p), float(t), bool(ok)
+            )
+
+            self.tecStatusChanged.emit()
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error in TEC status operation: {e}")
+            return False
+        finally:
+            self._console_mutex.unlock()
+
+    @pyqtSlot(result=QVariant)
+    def pdu_mon(self):
+        """
+        Returns a dict (QVariant) for QML:
+        On success:
+          {
+            "ok": True,
+            "adc0": {"raws": [...8...], "vals": [...8...]},
+            "adc1": {"raws": [...8...], "vals": [...8...]},
+          }
+        On error:
+          { "ok": False, "error": "..." }
+        """
+        self._console_mutex.lock()
+        try:
+            pdu = motion_interface.console_module.read_pdu_mon()
+            if pdu is None:
+                logger.error("PDU MON: no data")
+                return {"ok": False, "error": "no data"}
+            
+            temp1, temp2, temp3 = motion_interface.console_module.get_temperatures()  
+
+            # Cache for QML bindings
+            self._pdu_raws = list(pdu.raws)
+            self._pdu_vals = list(pdu.volts)
+
+            
+            # Emit change for any bound properties
+            self.pduMonChanged.emit()
+
+            adc1_scaled = [
+                (v / SCALE_V) if i == 6 else (v / SCALE_I)  # i is ADC1 channel index 0..7
+                for i, v in enumerate(self._pdu_vals[8:])
+            ]
+
+            # Run-log (concise)
+            run_logger.info(
+                "PDU MON ADC0 vals: %s",
+                " ".join(f"{(v/SCALE_V):.3f}" for v in self._pdu_vals[:8])
+            )
+            
+            run_logger.info(
+                "PDU MON ADC1 vals: %s",
+                " ".join(f"{i:.3f}" for i in adc1_scaled)
+            )
+
+            run_logger.info(
+                "TEMP MON: MCU: %.2f SAFETY: %.2f TA: %.2f",
+                temp1, temp2, temp3
+            )
+        
+            # Return QML-friendly dict
+            return {
+                "ok": True,
+                "adc0": {
+                    "raws": self._pdu_raws[:8],
+                    "vals": self._pdu_vals[:8],
+                },
+                "adc1": {
+                    "raws": self._pdu_raws[8:],
+                    "vals": self._pdu_vals[8:],
+                },
+            }
+
+        except Exception as e:
+            logger.error("Error in PDU MON operation: %s", e)
+            return {"ok": False, "error": str(e)}
+        finally:
+            self._console_mutex.unlock()
+
     @pyqtSlot()
     def readSafetyStatus(self):
         # Replace this with your actual console status check
@@ -1461,7 +1795,10 @@ class ConsoleStatusThread(QThread):
         super().__init__(parent)
         self.connector = connector
         self._running = True
+        self._mutex = QMutex()
         self._wait_condition = QWaitCondition()
+        self.last_run = time.time()
+
 
     def run(self):
         """Run loop that calls readSafetyStatus() every 1000ms when console is connected."""
@@ -1471,6 +1808,17 @@ class ConsoleStatusThread(QThread):
             # Check if console is connected before reading safety status
             if self.connector._consoleConnected:
                 try:
+                    #
+                    # 1. TEC status poll
+                    #
+                    # This updates _tec_* fields inside connector and emits tecStatusChanged
+                    self.connector.tec_status()
+                    
+                    #
+                    # 2. PDU Mon poll
+                    #
+                    self.connector.pdu_mon()
+
                     # Call readSafetyStatus() on the connector
                     self.connector.readSafetyStatus()
                 except Exception as e:
