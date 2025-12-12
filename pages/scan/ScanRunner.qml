@@ -46,7 +46,7 @@ QtObject {
             stageUpdate("Configuring sensors/FPGA…")
             // watchdog ~200s (your log showed ~50s)
             if (_wd) try { _wd.stop() } catch(e) {}
-            _wd = Qt.createQmlObject('import QtQuick 6.5; Timer { interval: 200000; repeat: false }', flashTask, "flashWD")
+            _wd = Qt.createQmlObject('import QtQuick 6.5; Timer { interval: 250000; repeat: false }', flashTask, "flashWD")
             _wd.triggered.connect(function() {
                 messageOut("Flash step timed out.")
                 runner._finish(false, "Flash step timed out", "", "")
