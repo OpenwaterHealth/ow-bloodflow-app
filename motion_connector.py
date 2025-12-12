@@ -30,7 +30,7 @@ V_REF = 2.5
 R_1 = 18000 #(R221)
 R_2 = 8160  #(R224)
 R_3 = 51100 #(R225)
-
+TEC_VOLTAGE_DEFAULT = 1.1  # volts
 
 # Global loggers - will be configured by _configure_logging method
 logger = None
@@ -114,6 +114,7 @@ class MOTIONConnector(QObject):
         self._trigger_state = "OFF"
         self._state = DISCONNECTED
         self.laser_params = self._load_laser_params(config_dir)
+        self._tec_voltage_default = self._load_tec_params(config_dir)
 
         self._post_thread = None
         self._post_cancel = threading.Event()
@@ -402,7 +403,7 @@ class MOTIONConnector(QObject):
     @pyqtSlot(str, str)
     def on_connected(self, descriptor, port):
         """Handle device connection."""
-        print(f"Device connected: {descriptor} on port {port}")
+        logging.info(f"Device connected: {descriptor} on port {port}")
         if descriptor.upper() == "SENSOR_LEFT":
             self._leftSensorConnected = True
         if descriptor.upper() == "SENSOR_RIGHT":
@@ -410,6 +411,10 @@ class MOTIONConnector(QObject):
         elif descriptor.upper() == "CONSOLE":
             self._consoleConnected = True
             self._console_mutex.lock()
+            if motion_interface.console_module.tec_voltage(self._tec_voltage_default):
+                logger.info(f"Console TEC voltage set to {self._tec_voltage_default}V")
+            else:
+                logger.error(f"Failed to set console TEC voltage to {self._tec_voltage_default}V")
             if motion_interface.console_module.set_fan_speed(fan_speed=100):
                 logger.info("Console fan speed set to 50%")
             else:
@@ -439,7 +444,7 @@ class MOTIONConnector(QObject):
                 self._console_status_thread.stop()
                 self._console_status_thread = None
 
-        print(f"Device disconnected: {descriptor} on port {port}")
+        logging.info(f"Device disconnected: {descriptor} on port {port}")
         self.signalDisconnected.emit(descriptor, port)
         self.connectionStatusChanged.emit() 
         self.update_state()
@@ -496,6 +501,30 @@ class MOTIONConnector(QObject):
         except json.JSONDecodeError as e:
             logger.error(f"[Connector] Invalid JSON in {config_path}: {e}")
             return []
+    
+    def _load_tec_params(self, config_dir):
+        """Load TEC parameters from tec_params.json and return the voltage value."""
+        config_path = resource_path("config", "tec_params.json") if config_dir == "config" else Path(config_dir) / "tec_params.json"
+        
+        if not config_path.exists():
+            logger.warning(f"[Connector] TEC parameter file not found: {config_path}, using default value {TEC_VOLTAGE_DEFAULT}V")
+            return TEC_VOLTAGE_DEFAULT
+        
+        try:
+            with open(config_path, "r") as f:
+                params = json.load(f)
+            voltage = params.get("TEC_VOLTAGE_DEFAULT", TEC_VOLTAGE_DEFAULT)
+            logger.info(f"[Connector] Loaded TEC voltage from {config_path}: {voltage}V")
+            return voltage
+        except FileNotFoundError:
+            logger.warning(f"[Connector] TEC parameter file not found: {config_path}, using default value {TEC_VOLTAGE_DEFAULT}V")
+            return TEC_VOLTAGE_DEFAULT
+        except json.JSONDecodeError as e:
+            logger.error(f"[Connector] Invalid JSON in {config_path}: {e}, using default value {TEC_VOLTAGE_DEFAULT}V")
+            return TEC_VOLTAGE_DEFAULT
+        except Exception as e:
+            logger.error(f"[Connector] Error loading TEC parameters: {e}, using default value {TEC_VOLTAGE_DEFAULT}V")
+            return TEC_VOLTAGE_DEFAULT
             
     @pyqtSlot(result=list)
     def get_scan_list(self):
@@ -578,7 +607,7 @@ class MOTIONConnector(QObject):
         if path.startswith("file:///"):
             path = path[8:] if path[9] != ':' else path[8:]
         self._directory = path
-        print(f"[Connector] Default directory set to: {self._directory}")
+        logger.debug(f"[Connector] Default directory set to: {self._directory}")
         self.directoryChanged.emit()
 
     @pyqtProperty(str, notify=scanNotesChanged)   # <-- add notify
@@ -985,7 +1014,6 @@ class MOTIONConnector(QObject):
                 if self._safetyFailure:
                     self._safetyFailure = False
                     self.safetyFailureStateChanged.emit(False)
-                    print("No laser safety failure detected")
                     logging.info(f"No laser safety failure detected")
             else:
                 if not self._safetyFailure:
@@ -993,7 +1021,7 @@ class MOTIONConnector(QObject):
                     self.stopTrigger()
                     self.laserStateChanged.emit(False)
                     self.safetyFailureStateChanged.emit(True)  
-                    print(f"Failure Detected: {status_text}")
+                    logging.error(f"Failure Detected: {status_text}")
 
             # Emit combined status if needed
             
