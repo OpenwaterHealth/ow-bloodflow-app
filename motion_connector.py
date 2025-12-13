@@ -1469,6 +1469,9 @@ class MOTIONConnector(QObject):
             import matplotlib.pyplot as plt
             from processing.visualize_bloodflow import VisualizeBloodflow
 
+            # Close any existing matplotlib figures to prevent multiple windows from old scans
+            plt.close('all')
+
             bfi = payload["bfi"]; bvi = payload["bvi"]
             camera_inds = payload["camera_inds"]
             contrast= payload["contrast"]; mean = payload["mean"]
