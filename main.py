@@ -15,6 +15,9 @@ from motion_connector import MOTIONConnector
 from pathlib import Path
 
 
+APP_VERSION = "0.3.8i"
+
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.ERROR)  # or INFO depending on what you want to see
 
@@ -33,7 +36,6 @@ def main():
     os.environ["QT_QUICK_CONTROLS_MATERIAL_THEME"] = "Dark"
     os.environ["QT_LOGGING_RULES"] = "qt.qpa.fonts=false"
 
-
     # --- parse flags ignore unknown (Qt) flags ---
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--advanced-sensors", action="store_true")
@@ -45,7 +47,7 @@ def main():
     if sys.platform == "win32":
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("OpenWaterHealth.BloodflowApp.0.3.8f")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("OpenWaterHealth.BloodflowApp")
         except Exception:
             pass  # Ignore if not available
     
@@ -54,16 +56,8 @@ def main():
     
     # Set application properties for Windows taskbar
     app.setApplicationName("OpenWater Bloodflow")
-    app.setApplicationVersion("0.3.8h")
+    app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName("OpenWater Health")
-    
-    # Windows-specific: Set application user model ID for proper taskbar grouping
-    if sys.platform == "win32":
-        try:
-            import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("OpenWaterHealth.BloodflowApp.0.3.8h")
-        except Exception:
-            pass  # Ignore if not available
     
     engine = QQmlApplicationEngine()
 
@@ -73,7 +67,7 @@ def main():
     engine.rootContext().setContextProperty("AppFlags", {
         "advancedSensors": True
     })
-    engine.rootContext().setContextProperty("appVersion", "0.3.8h")
+    engine.rootContext().setContextProperty("appVersion", APP_VERSION)
 
     # Load the QML file
     engine.load(resource_path("main.qml"))
