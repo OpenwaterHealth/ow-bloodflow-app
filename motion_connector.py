@@ -1889,7 +1889,7 @@ class ConsoleStatusThread(QThread):
                     tcl_raw = self.connector.i2cReadBytes("CONSOLE", muxIdx, 4, i2cAddr, 0x10, 4)
                     pdc_raw = self.connector.i2cReadBytes("CONSOLE", muxIdx, 7, i2cAddr, 0x1C, 2)
                     
-                    logging.debug(f"tcm_raw: {tcm_raw} tcl_raw: {tcl_raw} pdc_raw: {pdc_raw}")
+                    logging.info(f"tcm_raw: {tcm_raw} tcl_raw: {tcl_raw} pdc_raw: {pdc_raw}")
 
                     if tcl_raw and pdc_raw:
                         tcm = int(tcm_raw)
@@ -1905,13 +1905,15 @@ class ConsoleStatusThread(QThread):
                             self.connector._tcm = tcm
                             self.connector._pdc = pdc
 
-                            logging.debug(
+                            logging.info(
                                 f"Analog Values - TCM: {tcm}, TCL: {tcl}, PDC: {pdc:.3f} mA"
                             )
 
                             run_logger.info(
                                 f"Analog Values - TCM: {tcm}, TCL: {tcl}, PDC: {pdc:.3f}"
                             )
+                    else:
+                        logging.error("Failed to read analog telemetry values")
 
                 except Exception as e:
                     logger.error(f"Console status query failed: {e}")
