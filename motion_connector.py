@@ -82,9 +82,6 @@ class MOTIONConnector(QObject):
     postLog = pyqtSignal(str)
     postFinished = pyqtSignal(bool, str, str, str)  # ok, err, leftCsv, rightCsv
     
-    tcmChanged = pyqtSignal()
-    tclChanged = pyqtSignal()
-    pdcChanged = pyqtSignal()
     pduMonChanged = pyqtSignal()
 
     tecStatusChanged = pyqtSignal()
@@ -1156,6 +1153,34 @@ class MOTIONConnector(QObject):
         self.triggerStateChanged.emit()        
         logger.info("Trigger stopped.")   
 
+    @pyqtSlot(result=int)
+    def getFsyncCount(self):
+        """Get the Fsync count from the console."""
+        self._console_mutex.lock()
+        try:
+            fsync_count = motion_interface.console_module.get_fsync_pulsecount()
+            logger.info(f"Fsync Count: {fsync_count}")
+            return fsync_count
+        except Exception as e:
+            logger.error(f"Error getting Fsync count: {e}")
+            return -1
+        finally:
+            self._console_mutex.unlock()    
+
+    @pyqtSlot(result=int)
+    def getLsyncCount(self):
+        """Get the Fsync count from the console."""
+        self._console_mutex.lock()
+        try:
+            lsync_count = motion_interface.console_module.get_lsync_pulsecount()
+            logger.debug(f"Lsync Count: {lsync_count}")
+            return lsync_count
+        except Exception as e:
+            logger.error(f"Error getting Lsync count: {e}")
+            return -1
+        finally:
+            self._console_mutex.unlock()
+
     @pyqtSlot(result=bool)
     def setLaserPowerFromConfig(self) -> bool:
         """Apply laser power parameters loaded at startup."""
@@ -1850,8 +1875,44 @@ class ConsoleStatusThread(QThread):
                     #
                     self.connector.pdu_mon()
 
-                    # Call readSafetyStatus() on the connector
+                    # 3. Safety / interlock state
                     self.connector.readSafetyStatus()
+                    
+                    #
+                    # 4. Analog telemetry (tcm/tcl/pdc)
+                    #
+                    
+                    muxIdx = 1
+                    i2cAddr = 0x41
+            
+                    tcm_raw = self.connector.getLsyncCount()
+                    tcl_raw = self.connector.i2cReadBytes("CONSOLE", muxIdx, 4, i2cAddr, 0x10, 4)
+                    pdc_raw = self.connector.i2cReadBytes("CONSOLE", muxIdx, 7, i2cAddr, 0x1C, 2)
+                    
+                    logging.debug(f"tcm_raw: {tcm_raw} tcl_raw: {tcl_raw} pdc_raw: {pdc_raw}")
+
+                    if tcl_raw and pdc_raw:
+                        tcm = int(tcm_raw)
+                        tcl = int.from_bytes(tcl_raw, byteorder='little')
+                        pdc = int.from_bytes(pdc_raw, byteorder='little') * 1.9  # mA
+
+                        if (
+                            tcl != self.connector._tcl or
+                            tcm != self.connector._tcm or
+                            pdc != self.connector._pdc
+                        ):
+                            self.connector._tcl = tcl
+                            self.connector._tcm = tcm
+                            self.connector._pdc = pdc
+
+                            logging.debug(
+                                f"Analog Values - TCM: {tcm}, TCL: {tcl}, PDC: {pdc:.3f} mA"
+                            )
+
+                            run_logger.info(
+                                f"Analog Values - TCM: {tcm}, TCL: {tcl}, PDC: {pdc:.3f}"
+                            )
+
                 except Exception as e:
                     logger.error(f"Console status query failed: {e}")
                     self.statusUpdate.emit(f"Safety status read error: {e}")
