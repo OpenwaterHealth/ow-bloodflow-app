@@ -238,7 +238,7 @@ Rectangle {
 
                         Button {
                             id: btnVisualize
-                            text: "Visualize"
+                            text: "Visualize BFI/BVI"
                             Layout.fillWidth: true
                             Layout.preferredHeight: 40
                             Layout.alignment: Qt.AlignHCenter 
@@ -261,7 +261,40 @@ Rectangle {
                                 dataAnalysis.visualizing = true
                                 const left  = selected.leftPath  || ""
                                 const right = selected.rightPath || ""
-                                const ok = MOTIONInterface.visualize_bloodflow(left, right, 0.0, 0.0)
+                                const ok = MOTIONInterface.visualize_bloodflow(left, right, 0.0, 0.0, false)
+                                if (!ok) {
+                                    console.warn("visualize_bloodflow returned false")
+                                    dataAnalysis.visualizing = false
+                                }
+                            }
+                        }
+
+                        Button {
+                            id: btnVisualizeContrast
+                            text: "Visualize Contrast/Mean"
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 40
+                            Layout.alignment: Qt.AlignHCenter 
+                            enabled: !!(selected.leftPath || selected.rightPath)
+                            hoverEnabled: enabled          
+
+                            contentItem: Text {
+                                text: parent.text
+                                font.pixelSize: 14
+                                color: parent.enabled ? "#BDC3C7" : "#7F8C8D"
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            background: Rectangle {
+                                color: !parent.enabled ? "#3A3F4B" : parent.hovered ? "#4A90E2" : "#3A3F4B"
+                                border.color: !parent.enabled ? "#7F8C8D" : parent.hovered ? "#FFFFFF" : "#BDC3C7"
+                                radius: 4
+                            }
+                            onClicked: {
+                                dataAnalysis.visualizing = true
+                                const left  = selected.leftPath  || ""
+                                const right = selected.rightPath || ""
+                                const ok = MOTIONInterface.visualize_bloodflow(left, right, 0.0, 0.0, true)
                                 if (!ok) {
                                     console.warn("visualize_bloodflow returned false")
                                     dataAnalysis.visualizing = false

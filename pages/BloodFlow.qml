@@ -29,7 +29,7 @@ Rectangle {
         ListElement { name: "Outer";  maskHex: "0x99" }  
         ListElement { name: "Left";  maskHex: "0x0F" }  
         ListElement { name: "Right";  maskHex: "0xF0" }  
-        // ListElement { name: "All";  maskHex: "0xFF" }  
+        ListElement { name: "All";  maskHex: "0xFF" }  
     }
 
     // Convert to mask
@@ -281,7 +281,7 @@ Rectangle {
                                     case 4: leftSensorView.sensorActive = [true,false,false,true,true,false,false,true]; break;  // 0x99
                                     case 5: leftSensorView.sensorActive = [false,false,false,false,true,true,true,true]; break;  // 0x0F
                                     case 6: leftSensorView.sensorActive = [true,true,true,true,false,false,false,false]; break;  // 0xF0
-                                    // case 7: leftSensorView.sensorActive = [true,true,true,true,true,true,true,true]; break;  // 0xFF
+                                    case 7: leftSensorView.sensorActive = [true,true,true,true,true,true,true,true]; break;  // 0xFF
                                 }
                             }
 
@@ -327,7 +327,7 @@ Rectangle {
                                     case 4: rightSensorView.sensorActive = [true,false,false,true,true,false,false,true]; break;  // 0x99
                                     case 5: rightSensorView.sensorActive = [false,false,false,false,true,true,true,true]; break;  // 0x0F
                                     case 6: rightSensorView.sensorActive = [true,true,true,true,false,false,false,false]; break;  // 0xF0
-                                    // case 7: rightSensorView.sensorActive = [true,true,true,true,true,true,true,true]; break;  // 0xFF
+                                    case 7: rightSensorView.sensorActive = [true,true,true,true,true,true,true,true]; break;  // 0xFF
                                 }                                
                             }
 
