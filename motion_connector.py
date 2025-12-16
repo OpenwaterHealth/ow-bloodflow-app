@@ -1905,13 +1905,13 @@ class ConsoleStatusThread(QThread):
                             self.connector._tcm = tcm
                             self.connector._pdc = pdc
 
-                            logging.info(
-                                f"Analog Values - TCM: {tcm}, TCL: {tcl}, PDC: {pdc:.3f} mA"
-                            )
+                        logging.info(
+                            f"Analog Values - TCM: {tcm}, TCL: {tcl}, PDC: {pdc:.3f} mA"
+                        )
 
-                            run_logger.info(
-                                f"Analog Values - TCM: {tcm}, TCL: {tcl}, PDC: {pdc:.3f}"
-                            )
+                        run_logger.info(
+                            f"Analog Values - TCM: {tcm}, TCL: {tcl}, PDC: {pdc:.3f}"
+                        )
                     else:
                         logging.error("Failed to read analog telemetry values")
 
