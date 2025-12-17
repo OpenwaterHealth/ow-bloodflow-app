@@ -246,7 +246,7 @@ class VisualizeBloodflow:
         fig, ax = plt.subplots(nrows=nrows, ncols=ncols, figsize=(6 * ncols, 8), squeeze=False)
 
         # Birmingham mapping: camera position to subplot row
-        position_to_row = {0: 0, 1: 2, 2: 3, 3: 1}  # Far sensor on top
+        position_to_row = {0: 0, 1: 1, 2: 2, 3: 3}  # Far sensor on top
         
         # Initialize all subplots as empty placeholders
         for row in range(4):
