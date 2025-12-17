@@ -98,7 +98,7 @@ class VisualizeBloodflow:
 
 
         # raise an error if the number of points acquired in either histogram is less than the dark_interval
-        if histos.shape[1] < self.dark_interval or histos2.shape[1] < self.dark_interval:
+        if histos.shape[1] < self.dark_interval:
             raise ValueError("The number of points acquired in either histogram is less than the dark_interval")
         
         # baseline adjust & noise floor
