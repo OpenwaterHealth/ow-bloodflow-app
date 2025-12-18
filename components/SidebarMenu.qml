@@ -51,16 +51,16 @@ Rectangle {
         }
 
         // Settings Button
-        IconButton {
-            buttonIcon: "\ueabf"
-            buttonText: "Settings"
-            Layout.alignment: Qt.AlignHCenter
-            enabled: false
-            backgroundColor: sidebarMenu.activeButtonIndex === 2 ? "white" : "transparent"
-            iconColor: sidebarMenu.activeButtonIndex === 2 ? "#2C3E50" : "#BDC3C7"
-            onClicked: {
-                sidebarMenu.handleButtonClick(2); // Call the global function
-            }
-        }
+        //IconButton {
+        //    buttonIcon: "\ueabf"
+        //    buttonText: "Settings"
+        //    Layout.alignment: Qt.AlignHCenter
+        //    enabled: false
+        //    backgroundColor: sidebarMenu.activeButtonIndex === 2 ? "white" : "transparent"
+        //    iconColor: sidebarMenu.activeButtonIndex === 2 ? "#2C3E50" : "#BDC3C7"
+        //    onClicked: {
+        //        sidebarMenu.handleButtonClick(2); // Call the global function
+        //    }
+        //}
     }
 }
