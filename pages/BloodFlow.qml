@@ -287,12 +287,12 @@ Rectangle {
 
                             Component.onCompleted: {
                                 if (advancedSensors) {
-                                    currentIndex = 1    // default to "Near"
-                                    leftSensorView.sensorActive = [false,true,false,true,true,false,true,false] // 0x5A
+                                    currentIndex = 4    // default to "Outer"
+                                    leftSensorView.sensorActive = [true,false,false,true,true,false,false,true] // 0x99
                                 } else {
-                                    currentIndex = 1    // default to "Near"
+                                    currentIndex = 4    // default to "Outer"
                                     // manually trigger case 1 if only one option
-                                    leftSensorView.sensorActive = [false,true,false,true,true,false,true,false] // 0x5A
+                                    leftSensorView.sensorActive = [true,false,false,true,true,false,false,true] // 0x99
                                 }
                             }
                         }
@@ -333,11 +333,12 @@ Rectangle {
 
                             Component.onCompleted: {
                                 if (advancedSensors) {
-                                    currentIndex = 0    // default to "None"                                    
+                                    currentIndex = 4    // default to "Outer"
+                                    rightSensorView.sensorActive = [true,false,false,true,true,false,false,true]      //0x99                             
                                 } else {
                                     // manually trigger case 1 if only one option
-                                    currentIndex = 1    // default to "Near"
-                                    rightSensorView.sensorActive = [false,true,false,true,true,false,true,false] // 0x5A
+                                    currentIndex = 4    // default to "Outer"
+                                    rightSensorView.sensorActive = [true,false,false,true,true,false,false,true] // 0x99
                                 }
                             }
                         }
