@@ -95,6 +95,11 @@ class VisualizeBloodflow:
             nmodules = 2
 
         self._sides = sides
+
+
+        # raise an error if the number of points acquired in either histogram is less than the dark_interval
+        if histos.shape[1] < self.dark_interval:
+            raise ValueError("The number of points acquired in either histogram is less than the dark_interval")
         
         # baseline adjust & noise floor
         histos = histos.astype(float, copy=False)
@@ -116,7 +121,7 @@ class VisualizeBloodflow:
         bins = np.expand_dims(np.arange(1024, dtype=float), axis=0)
         temp1 = self._moments(bins, histos_dark, 1)
         temp2 = self._moments(bins, histos_dark, 2)
-        tempv = temp2 - temp1 ** 2
+        tempv = temp2 - temp1 ** 2 # variance of dark histograms
 
         u1_dark = np.zeros((len(camera_inds), ntimepts), dtype=float)
         var_dark = np.zeros((len(camera_inds), ntimepts), dtype=float)
@@ -241,7 +246,7 @@ class VisualizeBloodflow:
         fig, ax = plt.subplots(nrows=nrows, ncols=ncols, figsize=(6 * ncols, 8), squeeze=False)
 
         # Birmingham mapping: camera position to subplot row
-        position_to_row = {0: 0, 1: 2, 2: 3, 3: 1}  # Far sensor on top
+        position_to_row = {0: 0, 1: 1, 2: 2, 3: 3}  # Far sensor on top
         
         # Initialize all subplots as empty placeholders
         for row in range(4):

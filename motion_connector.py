@@ -850,6 +850,7 @@ class MOTIONConnector(QObject):
                 self._sensor_mutex[0].unlock()  # unlock all mutexes at end of capture (should be already unlocked)
                 self._sensor_mutex[1].unlock()
                 self._console_mutex.unlock()
+                self._stop_runlog()
         # launch worker
         self._capture_thread = threading.Thread(target=_worker, daemon=True)
         self._capture_thread.start()
@@ -1151,6 +1152,7 @@ class MOTIONConnector(QObject):
         self._console_mutex.unlock()
         self._trigger_state = "OFF"
         self.triggerStateChanged.emit()        
+        self._stop_runlog()
         logger.info("Trigger stopped.")   
 
     @pyqtSlot(result=int)
@@ -1697,13 +1699,8 @@ class _VizWorker(QObject):
             # Convert empty strings to None for optional right_csv, but ensure left_csv is valid
             left_path = self.left_csv if self.left_csv else None
             right_path = self.right_csv if self.right_csv else None
-            
-            # If only right_csv is provided, use it as left_csv
-            if not left_path and right_path:
-                left_path = right_path
-                right_path = None
-            
-            if not left_path:
+
+            if not left_path and not right_path:
                 self.error.emit("No valid CSV file provided for visualization")
                 self.finished.emit()
                 return
