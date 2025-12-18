@@ -850,6 +850,7 @@ class MOTIONConnector(QObject):
                 self._sensor_mutex[0].unlock()  # unlock all mutexes at end of capture (should be already unlocked)
                 self._sensor_mutex[1].unlock()
                 self._console_mutex.unlock()
+                self._stop_runlog()
         # launch worker
         self._capture_thread = threading.Thread(target=_worker, daemon=True)
         self._capture_thread.start()
@@ -1151,6 +1152,7 @@ class MOTIONConnector(QObject):
         self._console_mutex.unlock()
         self._trigger_state = "OFF"
         self.triggerStateChanged.emit()        
+        self._stop_runlog()
         logger.info("Trigger stopped.")   
 
     @pyqtSlot(result=int)
