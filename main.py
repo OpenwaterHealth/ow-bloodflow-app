@@ -15,7 +15,7 @@ from motion_connector import MOTIONConnector
 from pathlib import Path
 
 
-APP_VERSION = "0.4-pre"
+APP_VERSION = "0.4.1"
 
 
 logger = logging.getLogger(__name__)

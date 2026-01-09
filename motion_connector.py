@@ -190,6 +190,9 @@ class MOTIONConnector(QObject):
                 logger.propagate = True
             else:
                 # No root handlers, set up our own console handler
+                # Disable propagation to prevent duplicate messages
+                logger.propagate = False
+                
                 console_handler = logging.StreamHandler()
                 console_handler.setLevel(log_level)
                 console_handler.setFormatter(formatter)
@@ -342,7 +345,7 @@ class MOTIONConnector(QObject):
         self._runlog_path = None
         self._runlog_active = False
 
-# --- GETTERS/SETTERS FOR Qt PROPERTIES ---
+    # --- GETTERS/SETTERS FOR Qt PROPERTIES ---
     def getSubjectId(self) -> str:
         return self._subject_id
 
@@ -396,7 +399,7 @@ class MOTIONConnector(QObject):
     def triggerState(self):
         return self._trigger_state
     
-# --- DEVICE CONNECTION / DISCONNECTION / STATE MANAGEMENT METHODS ---
+    # --- DEVICE CONNECTION / DISCONNECTION / STATE MANAGEMENT METHODS ---
     @pyqtSlot(str, str)
     def on_connected(self, descriptor, port):
         """Handle device connection."""
@@ -478,7 +481,7 @@ class MOTIONConnector(QObject):
             self._console_status_thread.stop()
             self._console_status_thread = None
 
-# --- SCAN MANAGEMENT METHODS ---
+    # --- SCAN MANAGEMENT METHODS ---
     @pyqtSlot(result=list)
     def _load_laser_params(self, config_dir):
         
@@ -622,7 +625,7 @@ class MOTIONConnector(QObject):
         suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
         return f"ow{suffix}"
         
-# --- CONSOLE COMMUNICATION METHODS ---
+    # --- CONSOLE COMMUNICATION METHODS ---
     @pyqtSlot()
     def queryConsoleInfo(self):
         """Fetch and emit device information."""
@@ -1220,7 +1223,7 @@ class MOTIONConnector(QObject):
         self._console_mutex.unlock()
         return True
     
-# --- SENSOR COMMUNICATION METHODS ---
+    # --- SENSOR COMMUNICATION METHODS ---
     @pyqtSlot(int, int)
     def startConfigureCameraSensors(self, left_camera_mask:int, right_camera_mask:int):
         if self._config_thread: return
@@ -1451,7 +1454,7 @@ class MOTIONConnector(QObject):
             logger.error(f"Error getting fan control status: {e}")
             return False
 
-# --- BLOODFLOW VISUALIZATION / POST-PROCESSING METHODS ---
+    # --- BLOODFLOW VISUALIZATION / POST-PROCESSING METHODS ---
     @pyqtSlot(str, str, float, float, bool, result=bool)
     def visualize_bloodflow(self, left_csv: str, right_csv: str, t1: float = 0.0, t2: float = 120.0, plot_contrast: bool = False) -> bool:
         left_csv  = (left_csv or "").strip()
@@ -1626,7 +1629,7 @@ class MOTIONConnector(QObject):
         self.postLog.emit("Cancel requested.")
         self._post_cancel.set()
 
-# --- ERROR HANDLING METHODS / MISCELLANEOUS METHODS ---
+    # --- ERROR HANDLING METHODS / MISCELLANEOUS METHODS ---
     @pyqtSlot(str)
     def emitError(self, msg):
         self.errorOccurred.emit(msg)
