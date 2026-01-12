@@ -13,6 +13,10 @@ from PyQt6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
 from PyQt6.QtCore import qInstallMessageHandler, QtMsgType
 from qasync import QEventLoop
 
+# Set log root for omotion library before any omotion imports
+import omotion
+omotion.set_log_root("bloodflow-app.sdk")
+
 from motion_connector import MOTIONConnector
 from pathlib import Path
 
@@ -61,7 +65,7 @@ def main():
 
     # Configure logging
     logger.propagate = False
-    
+
     formatter = logging.Formatter(
         '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
     )
