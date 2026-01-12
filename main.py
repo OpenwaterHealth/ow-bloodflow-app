@@ -59,7 +59,9 @@ def main():
     parser.add_argument("--advanced-sensors", action="store_true")
     my_args, _unknown = parser.parse_known_args(sys.argv[1:])
 
-    # Configure console
+    # Configure logging
+    logger.propagate = False
+    
     formatter = logging.Formatter(
         '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
     )

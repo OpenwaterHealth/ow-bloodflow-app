@@ -34,9 +34,7 @@ TEC_VOLTAGE_DEFAULT = 1.1  # volts
 
 # Global loggers - will be configured by _configure_logging method
 logger = logging.getLogger("bloodflow-app.connector")
-logger.setLevel(logging.INFO)
 run_logger = logging.getLogger("bloodflow-app.runlog")
-run_logger.setLevel(logging.INFO)
 
 # Define system states
 DISCONNECTED = 0
@@ -905,7 +903,6 @@ class MOTIONConnector(QObject):
                 for i, v in enumerate(self._pdu_vals[8:])
             ]
 
-            # Run-log (concise)
             run_logger.info(
                 "PDU MON ADC0 vals: %s",
                 " ".join(f"{(v/SCALE_V):.3f}" for v in self._pdu_vals[:8])
@@ -1850,10 +1847,6 @@ class ConsoleStatusThread(QThread):
                             self.connector._tcl = tcl
                             self.connector._tcm = tcm
                             self.connector._pdc = pdc
-
-                        logging.info(
-                            f"Analog Values - TCM: {tcm}, TCL: {tcl}, PDC: {pdc:.3f} mA"
-                        )
 
                         run_logger.info(
                             f"Analog Values - TCM: {tcm}, TCL: {tcl}, PDC: {pdc:.3f}"
