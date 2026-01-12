@@ -33,9 +33,10 @@ R_3 = 51100 #(R225)
 TEC_VOLTAGE_DEFAULT = 1.1  # volts
 
 # Global loggers - will be configured by _configure_logging method
-logger = None
-run_logger = None
-
+logger = logging.getLogger("bloodflow-app.connector")
+logger.setLevel(logging.INFO)
+run_logger = logging.getLogger("bloodflow-app.runlog")
+run_logger.setLevel(logging.INFO)
 
 # Define system states
 DISCONNECTED = 0
@@ -168,58 +169,6 @@ class MOTIONConnector(QObject):
 
 
     def _configure_logging(self, log_level):
-        """Configure logging for motion_connector with the specified log level."""
-        global logger, run_logger
-        
-        # Get logger instance
-        logger = logging.getLogger("bloodflow-app")
-        logger.setLevel(log_level)
-        
-        # Common formatter
-        formatter = logging.Formatter(
-            '%(asctime)s - %(levelname)s - %(message)s'
-        )
-        
-        # Configure handlers - ensure console output for debug messages
-        if not logger.hasHandlers():
-            # Check if root logger has handlers (main.py configured logging)
-            root_logger = logging.getLogger()
-            if root_logger.handlers:
-                # Let messages propagate to root logger (main.py handles console/file output)
-                logger.propagate = True
-            else:
-                # No root handlers, set up our own console handler
-                # Disable propagation to prevent duplicate messages
-                logger.propagate = False
-                
-                console_handler = logging.StreamHandler()
-                console_handler.setLevel(log_level)
-                console_handler.setFormatter(formatter)
-                logger.addHandler(console_handler)
-
-                # Also add file handler for local logging
-                run_dir = os.path.join(os.getcwd(), "app-logs")
-                os.makedirs(run_dir, exist_ok=True)
-
-                # Build timestamp like 20251029_124455
-                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-                # ow-testapp-<ts>.log
-                logfile_path = os.path.join(run_dir, f"ow-testapp-{ts}.log")
-
-                file_handler = logging.FileHandler(logfile_path, mode='w', encoding='utf-8')
-                file_handler.setLevel(log_level)
-                file_handler.setFormatter(formatter)
-                logger.addHandler(file_handler)
-
-                # Optional: announce where we're logging
-                logger.info(f"logging to {logfile_path}")
-
-        # Run logger (ONLY writes to run.log, no console spam)
-        run_logger = logging.getLogger("runlog")
-        run_logger.setLevel(log_level)
-        run_logger.propagate = False
-
         # --- Load RT model (10K3CG_R-T.CSV) for TEC lookup ---
         try:
             # Look for file in the repository's models directory next to this file
@@ -240,7 +189,6 @@ class MOTIONConnector(QObject):
             self._data_RT = None
             logger.error(f"Failed to load RT model: {e}")
 
-        
     def _start_runlog(self):
         """
         Create a dedicated run log file and attach it to the global logger
