@@ -128,8 +128,7 @@ class MOTIONConnector(QObject):
         self._console_status_thread = None
 
         self._console_mutex = QRecursiveMutex()
-        
-        # Sensor mutexes for left and right sensors (following console mutex pattern)
+
         self._sensor_mutex = [QRecursiveMutex() , QRecursiveMutex()] # mutexes in [left,right] order
 
         self._tcm = 0.0
@@ -173,7 +172,7 @@ class MOTIONConnector(QObject):
         global logger, run_logger
         
         # Get logger instance
-        logger = logging.getLogger("ow-testapp")
+        logger = logging.getLogger("bloodflow-app")
         logger.setLevel(log_level)
         
         # Common formatter
@@ -389,6 +388,12 @@ class MOTIONConnector(QObject):
     def safetyFailure(self):
         """Expose Console connection status to QML."""
         return self._safetyFailure
+    
+    @safetyFailure.setter
+    def safetyFailure(self, value: bool):
+        if self._safetyFailure != value:
+            self._safetyFailure = value
+            self.safetyFailureStateChanged.emit()
 
     @pyqtProperty(int, notify=stateChanged)
     def state(self):
@@ -1013,23 +1018,17 @@ class MOTIONConnector(QObject):
             if (statuses["SE"] & 0x0F) == 0 and (statuses["SO"] & 0x0F) == 0:
                 logging.info(f"No laser safety failure detected")
                 if self._safetyFailure:
-                    self._safetyFailure = False
-                    self.safetyFailureStateChanged.emit(False)
+                    self.safetyFailure(False)
                     logging.info(f"No laser safety failure detected")
             else:
                 if not self._safetyFailure:
-                    self._safetyFailure = True
+                    self.safetyFailure(True)
                     self.stopTrigger()
                     self.laserStateChanged.emit(False)
-                    self.safetyFailureStateChanged.emit(True)  
-                    logging.error(f"Failure Detected: {status_text}")
-
-            # Emit combined status if needed
-            
-            logging.info(f"Status QUERY: {status_text}")
 
         except Exception as e:
             logging.error(f"Console status query failed: {e}")
+            self.safetyFailure(True)
 
     @pyqtSlot(str, int, int, int, int, int, result=QVariant)
     def i2cReadBytes(self, target: str, mux_idx: int, channel: int, i2c_addr: int, offset: int, data_len: int):
@@ -1859,7 +1858,6 @@ class ConsoleStatusThread(QThread):
     def run(self):
         """Run loop that calls readSafetyStatus() every 1000ms when console is connected."""
         logger.info("Console status thread started")
-        print("Console status thread started")
         while self._running:
             # Check if console is connected before reading safety status
             if self.connector._consoleConnected:

@@ -19,7 +19,7 @@ APP_VERSION = "0.4.1"
 
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.ERROR)  # or INFO depending on what you want to see
+logger.setLevel(logging.INFO)  # or INFO depending on what you want to see
 
 # Suppress PyQt6 DeprecationWarnings related to SIP
 warnings.simplefilter("ignore", DeprecationWarning)
@@ -73,7 +73,7 @@ def main():
     engine.load(resource_path("main.qml"))
 
     if not engine.rootObjects():
-        print("Error: Failed to load QML file")
+        logger.error("Error: Failed to load QML file")
         sys.exit(-1)
 
     loop = QEventLoop(app)
