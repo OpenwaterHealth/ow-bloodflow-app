@@ -354,7 +354,7 @@ class MOTIONConnector(QObject):
     @pyqtSlot(str, str)
     def on_connected(self, descriptor, port):
         """Handle device connection."""
-        logging.info(f"Device connected: {descriptor} on port {port}")
+        logger.info(f"Device connected: {descriptor} on port {port}")
         if descriptor.upper() == "SENSOR_LEFT":
             self._leftSensorConnected = True
         if descriptor.upper() == "SENSOR_RIGHT":
@@ -395,7 +395,7 @@ class MOTIONConnector(QObject):
                 self._console_status_thread.stop()
                 self._console_status_thread = None
 
-        logging.info(f"Device disconnected: {descriptor} on port {port}")
+        logger.info(f"Device disconnected: {descriptor} on port {port}")
         self.signalDisconnected.emit(descriptor, port)
         self.connectionStatusChanged.emit() 
         self.update_state()
@@ -961,10 +961,10 @@ class MOTIONConnector(QObject):
                 
             status_text = f"SE: 0x{statuses['SE']:02X}, SO: 0x{statuses['SO']:02X}"
             if (statuses["SE"] & 0x0F) == 0 and (statuses["SO"] & 0x0F) == 0:
-                logging.info(f"No laser safety failure detected")
+                logger.info(f"No laser safety failure detected")
                 if self._safetyFailure:
                     self.safetyFailure(False)
-                    logging.info(f"No laser safety failure detected")
+                    logger.info(f"No laser safety failure detected")
             else:
                 if not self._safetyFailure:
                     self.safetyFailure(True)
@@ -972,7 +972,7 @@ class MOTIONConnector(QObject):
                     self.laserStateChanged.emit(False)
 
         except Exception as e:
-            logging.error(f"Console status query failed: {e}")
+            logger.error(f"Console status query failed: {e}")
             self.safetyFailure(True)
 
     @pyqtSlot(str, int, int, int, int, int, result=QVariant)
@@ -1832,7 +1832,7 @@ class ConsoleStatusThread(QThread):
                     tcl_raw = self.connector.i2cReadBytes("CONSOLE", muxIdx, 4, i2cAddr, 0x10, 4)
                     pdc_raw = self.connector.i2cReadBytes("CONSOLE", muxIdx, 7, i2cAddr, 0x1C, 2)
                     
-                    logging.info(f"tcm_raw: {tcm_raw} tcl_raw: {tcl_raw} pdc_raw: {pdc_raw}")
+                    logger.info(f"tcm_raw: {tcm_raw} tcl_raw: {tcl_raw} pdc_raw: {pdc_raw}")
 
                     if tcl_raw and pdc_raw:
                         tcm = int(tcm_raw)
@@ -1852,7 +1852,7 @@ class ConsoleStatusThread(QThread):
                             f"Analog Values - TCM: {tcm}, TCL: {tcl}, PDC: {pdc:.3f}"
                         )
                     else:
-                        logging.error("Failed to read analog telemetry values")
+                        logger.error("Failed to read analog telemetry values")
 
                 except Exception as e:
                     logger.error(f"Console status query failed: {e}")
