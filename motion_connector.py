@@ -13,6 +13,8 @@ import time
 import random
 import re
 import string
+import platform
+import socket
 
 from motion_singleton import motion_interface  
 from processing.data_processing import DataProcessor 
@@ -20,8 +22,6 @@ from utils.resource_path import resource_path
 import struct
 import numpy as np
 import pandas as pd
-
-
 
 # constants for calculations
 SCALE_V = 0.0909
@@ -255,7 +255,9 @@ class MOTIONConnector(QObject):
         run_logger.info(f"SDK Version: {sdk_ver}")
         run_logger.info(f"Console Firmware: {fw_ver}")
         run_logger.info("================================")
-
+        
+        self.log_system_information(logger)
+        self.log_device_information()
         # Also drop a breadcrumb to the main logger so humans see it in console/UI log:
         logger.info(f"[RUNLOG] started -> {self._runlog_path}")
 
@@ -289,6 +291,121 @@ class MOTIONConnector(QObject):
         self._runlog_handler = None
         self._runlog_path = None
         self._runlog_active = False
+
+    def log_system_information(self,logger):
+        """Log system information including hostname, OS details, and hardware information."""
+        try:
+            hostname = socket.gethostname()
+            run_logger.info("=" * 80)
+            run_logger.info("SYSTEM INFORMATION")
+            run_logger.info("=" * 80)
+            run_logger.info(f"Hostname: {hostname}")
+            run_logger.info(f"Platform: {platform.platform()}")
+            run_logger.info(f"System: {platform.system()}")
+            run_logger.info(f"Release: {platform.release()}")
+            run_logger.info(f"Version: {platform.version()}")
+            run_logger.info(f"Architecture: {platform.machine()}")
+            run_logger.info(f"Processor: {platform.processor()}")
+            
+            # Additional hardware information
+            if platform.system() == "Windows":
+                try:
+                    import ctypes
+                    # Get total physical memory
+                    class MEMORYSTATUSEX(ctypes.Structure):
+                        _fields_ = [
+                            ("dwLength", ctypes.c_ulong),
+                            ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong),
+                            ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong),
+                            ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong),
+                            ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                        ]
+                    
+                    memStatus = MEMORYSTATUSEX()
+                    memStatus.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+                    ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(memStatus))
+                    total_memory_gb = memStatus.ullTotalPhys / (1024**3)
+                    run_logger.info(f"Total Physical Memory: {total_memory_gb:.2f} GB")
+                except Exception:
+                    pass
+            
+            # Python version
+            run_logger.info(f"Python Version: {platform.python_version()}")
+            run_logger.info(f"Python Implementation: {platform.python_implementation()}")
+            run_logger.info("=" * 80)
+        except Exception as e:
+            run_logger.warning(f"Failed to log system information: {e}")
+
+    def log_device_information(self):
+        """Log information about connected sensors and console to the run log."""
+        try:
+            run_logger.info("=" * 80)
+            run_logger.info("DEVICE INFORMATION")
+            run_logger.info("=" * 80)
+            
+            # Console information
+            if self._consoleConnected:
+                try:
+                    self._console_mutex.lock()
+                    try:
+                        fw_version = motion_interface.console_module.get_version()
+                        hw_id = motion_interface.console_module.get_hardware_id()
+                        device_id = base58.b58encode(bytes.fromhex(hw_id)).decode()
+                        run_logger.info(f"Console - Firmware: {fw_version}, Device ID: {device_id}")
+                    finally:
+                        self._console_mutex.unlock()
+                except Exception as e:
+                    run_logger.warning(f"Console - Failed to get device info: {e}")
+            else:
+                run_logger.info("Console - Not connected")
+            
+            # Left sensor information
+            if self._leftSensorConnected:
+                try:
+                    sensor = motion_interface.sensors.get("left")
+                    if sensor is not None:
+                        self._sensor_mutex[0].lock()
+                        try:
+                            fw_version = sensor.get_version()
+                            hw_id = sensor.get_hardware_id()
+                            device_id = base58.b58encode(bytes.fromhex(hw_id)).decode()
+                            run_logger.info(f"Left Sensor - Firmware: {fw_version}, Device ID: {device_id}")
+                        finally:
+                            self._sensor_mutex[0].unlock()
+                    else:
+                        run_logger.warning("Left Sensor - Sensor object is None")
+                except Exception as e:
+                    run_logger.warning(f"Left Sensor - Failed to get device info: {e}")
+            else:
+                run_logger.info("Left Sensor - Not connected")
+            
+            # Right sensor information
+            if self._rightSensorConnected:
+                try:
+                    sensor = motion_interface.sensors.get("right")
+                    if sensor is not None:
+                        self._sensor_mutex[1].lock()
+                        try:
+                            fw_version = sensor.get_version()
+                            hw_id = sensor.get_hardware_id()
+                            device_id = base58.b58encode(bytes.fromhex(hw_id)).decode()
+                            run_logger.info(f"Right Sensor - Firmware: {fw_version}, Device ID: {device_id}")
+                        finally:
+                            self._sensor_mutex[1].unlock()
+                    else:
+                        run_logger.warning("Right Sensor - Sensor object is None")
+                except Exception as e:
+                    run_logger.warning(f"Right Sensor - Failed to get device info: {e}")
+            else:
+                run_logger.info("Right Sensor - Not connected")
+            
+            run_logger.info("=" * 80)
+        except Exception as e:
+            run_logger.error(f"Failed to log device information: {e}")
 
     # --- GETTERS/SETTERS FOR Qt PROPERTIES ---
     def getSubjectId(self) -> str:

@@ -5,8 +5,6 @@ import argparse
 import warnings
 import logging
 import datetime
-import platform
-import socket
 
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication   
@@ -55,53 +53,6 @@ def resource_path(rel: str) -> str:
     base = getattr(sys, "_MEIPASS", os.path.abspath(os.path.dirname(sys.executable if getattr(sys,"frozen",False) else __file__)))
     return os.path.join(base, rel)
 
-def log_system_information(logger):
-    """Log system information including hostname, OS details, and hardware information."""
-    try:
-        hostname = socket.gethostname()
-        logger.info("=" * 80)
-        logger.info("SYSTEM INFORMATION")
-        logger.info("=" * 80)
-        logger.info(f"Hostname: {hostname}")
-        logger.info(f"Platform: {platform.platform()}")
-        logger.info(f"System: {platform.system()}")
-        logger.info(f"Release: {platform.release()}")
-        logger.info(f"Version: {platform.version()}")
-        logger.info(f"Architecture: {platform.machine()}")
-        logger.info(f"Processor: {platform.processor()}")
-        
-        # Additional hardware information
-        if platform.system() == "Windows":
-            try:
-                import ctypes
-                # Get total physical memory
-                class MEMORYSTATUSEX(ctypes.Structure):
-                    _fields_ = [
-                        ("dwLength", ctypes.c_ulong),
-                        ("dwMemoryLoad", ctypes.c_ulong),
-                        ("ullTotalPhys", ctypes.c_ulonglong),
-                        ("ullAvailPhys", ctypes.c_ulonglong),
-                        ("ullTotalPageFile", ctypes.c_ulonglong),
-                        ("ullAvailPageFile", ctypes.c_ulonglong),
-                        ("ullTotalVirtual", ctypes.c_ulonglong),
-                        ("ullAvailVirtual", ctypes.c_ulonglong),
-                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-                    ]
-                
-                memStatus = MEMORYSTATUSEX()
-                memStatus.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
-                ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(memStatus))
-                total_memory_gb = memStatus.ullTotalPhys / (1024**3)
-                logger.info(f"Total Physical Memory: {total_memory_gb:.2f} GB")
-            except Exception:
-                pass
-        
-        # Python version
-        logger.info(f"Python Version: {platform.python_version()}")
-        logger.info(f"Python Implementation: {platform.python_implementation()}")
-        logger.info("=" * 80)
-    except Exception as e:
-        logger.warning(f"Failed to log system information: {e}")
 
 def main():
     os.environ["QT_QUICK_CONTROLS_STYLE"] = "Material"
@@ -142,7 +93,7 @@ def main():
     logger.info(f"logging to {logfile_path}")
     
     # Log system information at the start of the log
-    log_system_information(logger)
+
 
     qInstallMessageHandler(qt_message_handler)
     
