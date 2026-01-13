@@ -250,14 +250,17 @@ class MOTIONConnector(QObject):
         #
         # Write session header into the run log
         #
-        run_logger.info("========== RUN START ==========")
+        run_logger.info("=" * 80)
+        run_logger.info("RUN START")
+        run_logger.info("=" * 80)
         run_logger.info(f"App Version: {app_ver}")
         run_logger.info(f"SDK Version: {sdk_ver}")
         run_logger.info(f"Console Firmware: {fw_ver}")
-        run_logger.info("================================")
+
         
         self.log_system_information(logger)
         self.log_device_information()
+        self.log_laser_information()
         # Also drop a breadcrumb to the main logger so humans see it in console/UI log:
         logger.info(f"[RUNLOG] started -> {self._runlog_path}")
 
@@ -336,7 +339,7 @@ class MOTIONConnector(QObject):
             # Python version
             run_logger.info(f"Python Version: {platform.python_version()}")
             run_logger.info(f"Python Implementation: {platform.python_implementation()}")
-            run_logger.info("=" * 80)
+
         except Exception as e:
             run_logger.warning(f"Failed to log system information: {e}")
 
@@ -403,10 +406,27 @@ class MOTIONConnector(QObject):
             else:
                 run_logger.info("Right Sensor - Not connected")
             
-            run_logger.info("=" * 80)
+
         except Exception as e:
             run_logger.error(f"Failed to log device information: {e}")
 
+    def log_laser_information(self):
+        """Log laser information to the run log."""
+        try:
+            run_logger.info("=" * 80)
+            run_logger.info("LASER INFORMATION")
+            run_logger.info("=" * 80)
+
+            # print laser parameters as read from the device
+            laser_params = self.laser_params
+            for param in laser_params:
+                run_logger.info(f"Mux Index: {param['muxIdx']}, Channel: {param['channel']}, I2C Address: {param['i2cAddr']}, Offset: {param['offset']}, Data to Send: {param['dataToSend']}")
+            run_logger.info("=" * 80)
+
+
+        except Exception as e:
+            run_logger.error(f"Failed to log laser information: {e}")
+    
     # --- GETTERS/SETTERS FOR Qt PROPERTIES ---
     def getSubjectId(self) -> str:
         return self._subject_id
