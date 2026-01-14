@@ -167,6 +167,8 @@ class MOTIONConnector(QObject):
 
 
     def _configure_logging(self, log_level):
+
+        run_logger.propagate = False
         # --- Load RT model (10K3CG_R-T.CSV) for TEC lookup ---
         try:
             # Look for file in the repository's models directory next to this file
@@ -1098,10 +1100,8 @@ class MOTIONConnector(QObject):
                 
             status_text = f"SE: 0x{statuses['SE']:02X}, SO: 0x{statuses['SO']:02X}"
             if (statuses["SE"] & 0x0F) == 0 and (statuses["SO"] & 0x0F) == 0:
-                logger.info(f"No laser safety failure detected")
                 if self._safetyFailure:
                     self.safetyFailure(False)
-                    logger.info(f"No laser safety failure detected")
             else:
                 if not self._safetyFailure:
                     self.safetyFailure(True)
@@ -1969,7 +1969,7 @@ class ConsoleStatusThread(QThread):
                     tcl_raw = self.connector.i2cReadBytes("CONSOLE", muxIdx, 4, i2cAddr, 0x10, 4)
                     pdc_raw = self.connector.i2cReadBytes("CONSOLE", muxIdx, 7, i2cAddr, 0x1C, 2)
                     
-                    logger.info(f"tcm_raw: {tcm_raw} tcl_raw: {tcl_raw} pdc_raw: {pdc_raw}")
+                    logger.debug(f"tcm_raw: {tcm_raw} tcl_raw: {tcl_raw} pdc_raw: {pdc_raw}")
 
                     if tcl_raw and pdc_raw:
                         tcm = int(tcm_raw)

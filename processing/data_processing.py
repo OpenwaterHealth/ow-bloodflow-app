@@ -10,7 +10,6 @@ import threading
 import logging
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)  # or INFO depending on what you want to see
 
 
 try:

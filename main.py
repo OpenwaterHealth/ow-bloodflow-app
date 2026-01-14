@@ -13,10 +13,6 @@ from PyQt6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
 from PyQt6.QtCore import qInstallMessageHandler, QtMsgType
 from qasync import QEventLoop
 
-# Set log root for omotion library before any omotion imports
-import omotion
-omotion.set_log_root("bloodflow-app.sdk")
-
 from motion_connector import MOTIONConnector
 from pathlib import Path
 
@@ -53,7 +49,6 @@ def resource_path(rel: str) -> str:
     base = getattr(sys, "_MEIPASS", os.path.abspath(os.path.dirname(sys.executable if getattr(sys,"frozen",False) else __file__)))
     return os.path.join(base, rel)
 
-
 def main():
     os.environ["QT_QUICK_CONTROLS_STYLE"] = "Material"
     os.environ["QT_QUICK_CONTROLS_MATERIAL_THEME"] = "Dark"
@@ -65,7 +60,7 @@ def main():
     my_args, _unknown = parser.parse_known_args(sys.argv[1:])
 
     # Configure logging
-    logger.propagate = False
+    logger.propagate = True
 
     formatter = logging.Formatter(
         '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
@@ -76,24 +71,16 @@ def main():
     logger.addHandler(console_handler)
 
     #Configure file logging
-    ## Create directory and file for local logging 
     run_dir = os.path.join(os.getcwd(), "app-logs") # Also add file handler for local logging
     os.makedirs(run_dir, exist_ok=True)
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S") # Build timestamp like 20251029_124455
     logfile_path = os.path.join(run_dir, f"ow-bloodflowapp-{ts}.log")
 
-    # Add file handler for local logging
     file_handler = logging.FileHandler(logfile_path, mode='w', encoding='utf-8')
     file_handler.setLevel(logging.INFO)
-    formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
-    )
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
     logger.info(f"logging to {logfile_path}")
-    
-    # Log system information at the start of the log
-
 
     qInstallMessageHandler(qt_message_handler)
     
