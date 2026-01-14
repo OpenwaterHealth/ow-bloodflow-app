@@ -20,7 +20,7 @@ from pathlib import Path
 APP_VERSION = "0.4.1"
 
 
-logger = logging.getLogger("bloodflow-app")
+logger = logging.getLogger("openmotion.bloodflow-app")
 logger.setLevel(logging.INFO)  # or INFO depending on what you want to see
 
 # Suppress PyQt6 DeprecationWarnings related to SIP
@@ -60,11 +60,10 @@ def main():
     my_args, _unknown = parser.parse_known_args(sys.argv[1:])
 
     # Configure logging
-    logger.propagate = True
-
     formatter = logging.Formatter(
         '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
     )
+    #Configure console logging
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(formatter)
@@ -81,6 +80,13 @@ def main():
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
     logger.info(f"logging to {logfile_path}")
+    
+    # Configure the SDK logger hierarchy to use the same handlers
+    sdk_logger = logging.getLogger("openmotion.sdk")
+    sdk_logger.setLevel(logging.INFO)
+    sdk_logger.addHandler(console_handler)
+    sdk_logger.addHandler(file_handler)
+    sdk_logger.propagate = False  # Don't propagate to root, use our handlers
 
     qInstallMessageHandler(qt_message_handler)
     
@@ -158,6 +164,9 @@ def main():
     except KeyboardInterrupt:
         logger.info("Application interrupted by user.")
     finally:
+        #print out logger tree
+        logger.info("Logger tree:")
+        logger.info(logger.manager.loggerDict)
         loop.close()
 
 if __name__ == "__main__":
