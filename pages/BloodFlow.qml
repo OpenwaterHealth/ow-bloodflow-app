@@ -629,6 +629,11 @@ Rectangle {
     Connections {
         target: MOTIONInterface
 
+        // Forward captureLog messages to QML console.log (which gets logged via qt_message_handler)
+        function onCaptureLog(line) {
+            console.log("Capture log: "+line)
+        }
+
         function onSignalConnected(descriptor, port) {
             console.log(descriptor + " connected on " + port);
             statusText.text = "Connected: " + descriptor + " on " + port;

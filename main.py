@@ -42,7 +42,10 @@ def qt_message_handler(msg_type, context, message):
     log_level = log_level_map.get(msg_type, logging.INFO)
     
     qml_message = f"QML: {message}"
-    logger.log(log_level, qml_message)
+    
+    logger = logging.getLogger("openmotion.bloodflow-app.qml-console")
+    logger.setLevel(logging.INFO)  # or INFO depending on what you want to see
+    logger.info(qml_message)
 
 def resource_path(rel: str) -> str:
     import sys, os
