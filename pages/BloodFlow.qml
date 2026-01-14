@@ -733,7 +733,10 @@ Rectangle {
             if (!scanDialog.visible) scanDialog.open();
             scanDialog.progress = pct;
         }
-        onMessageOut: function(line) { scanDialog.appendLog(line) }
+        onMessageOut: function(line) { 
+            scanDialog.appendLog(line)
+            console.log("Scan message: " + line)
+        }
         onScanFinished: function(ok, err, left, right) {
 
             if (err === "Canceled") {
