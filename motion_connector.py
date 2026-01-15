@@ -168,7 +168,7 @@ class MOTIONConnector(QObject):
 
     def _configure_logging(self, log_level):
 
-        run_logger.propagate = False
+        run_logger.propagate = True
         # --- Load RT model (10K3CG_R-T.CSV) for TEC lookup ---
         try:
             # Look for file in the repository's models directory next to this file
@@ -207,10 +207,11 @@ class MOTIONConnector(QObject):
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self._runlog_path = os.path.join(run_dir, f"run-{ts}.log")
 
-        # Create handler
+        # Create handler with immediate flushing (delay=False ensures file is opened immediately)
         run_handler = logging.FileHandler(self._runlog_path,
                                           mode='w',
-                                          encoding='utf-8')
+                                          encoding='utf-8',
+                                          delay=False)
         # Match the global formatter you already defined at top of file
         run_handler.setFormatter(logging.Formatter(
             '%(asctime)s - %(levelname)s - %(message)s'
@@ -220,6 +221,10 @@ class MOTIONConnector(QObject):
 
         # Attach this handler to run_logger ONLY
         run_logger.addHandler(run_handler)
+        
+        # Ensure run_logger has a level set (in case it wasn't configured)
+        if run_logger.level == logging.NOTSET:
+            run_logger.setLevel(logging.INFO)
 
         # Save so we can remove/close it later
         self._runlog_handler = run_handler
@@ -234,7 +239,8 @@ class MOTIONConnector(QObject):
 
         # App version (from constant we defined at top)
         try:
-            app_ver = "1.2.6" #TODO: need to read this from main
+            from main import APP_VERSION
+            app_ver = APP_VERSION # from main.py
         except Exception as e:
             app_ver = f"ERROR({e})"
 
@@ -259,10 +265,18 @@ class MOTIONConnector(QObject):
         run_logger.info(f"SDK Version: {sdk_ver}")
         run_logger.info(f"Console Firmware: {fw_ver}")
 
-        
+        # Log system information, device information, laser information, and camera UIDs
         self.log_system_information(logger)
         self.log_device_information()
         self.log_laser_information()
+        self._read_and_log_camera_uids()
+        
+        # Flush the handler to ensure header is written immediately
+        try:
+            self._runlog_handler.flush()
+        except Exception as e:
+            logger.error(f"Error flushing run log handler after header: {e}")
+        
         # Also drop a breadcrumb to the main logger so humans see it in console/UI log:
         logger.info(f"[RUNLOG] started -> {self._runlog_path}")
 
@@ -279,6 +293,12 @@ class MOTIONConnector(QObject):
 
         # Also note it in the main logger (console/app log)
         logger.info(f"[RUNLOG] stopped -> {self._runlog_path}")
+
+        # Flush the handler before removing it to ensure all data is written
+        try:
+            self._runlog_handler.flush()
+        except Exception as e:
+            logger.error(f"Error flushing run log handler: {e}")
 
         # 1. Remove handler from run_logger
         try:
@@ -1305,6 +1325,76 @@ class MOTIONConnector(QObject):
         return True
     
     # --- SENSOR COMMUNICATION METHODS ---
+    def _read_and_log_camera_uids(self):
+        """
+        Read and log security UIDs for all connected cameras.
+        This is called at the beginning of a scan.
+        Logs to both the main logger and run_logger (if active).
+        """
+        try:
+            logger.info("=== Reading camera security UIDs ===")
+            if self._runlog_active:
+                run_logger.info("=== Reading camera security UIDs ===")
+            
+            # Get all sensors (left and right)
+            sensors = []
+            if self._leftSensorConnected and "left" in motion_interface.sensors:
+                sensors.append(("left", motion_interface.sensors["left"]))
+            if self._rightSensorConnected and "right" in motion_interface.sensors:
+                sensors.append(("right", motion_interface.sensors["right"]))
+            
+            if not sensors:
+                logger.warning("No sensors connected, cannot read camera UIDs")
+                if self._runlog_active:
+                    run_logger.warning("No sensors connected, cannot read camera UIDs")
+                return
+            
+            # Read UIDs for all cameras (0-7) on each connected sensor
+            for sensor_name, sensor in sensors:
+                logger.info(f"Reading camera UIDs from {sensor_name} sensor...")
+                if self._runlog_active:
+                    run_logger.info(f"Reading camera UIDs from {sensor_name} sensor...")
+                
+                for camera_id in range(8):
+                    try:
+                        # Lock the appropriate mutex
+                        mutex_idx = 1 if sensor_name == "right" else 0
+                        self._sensor_mutex[mutex_idx].lock()
+                        
+                        uid_bytes = sensor.read_camera_security_uid(camera_id)
+                        self._sensor_mutex[mutex_idx].unlock()
+                        
+                        # Format UID as hex string
+                        uid_hex = ''.join(f'{b:02X}' for b in uid_bytes)
+                        
+                        # Check if UID is all zeros (camera not present)
+                        if all(b == 0 for b in uid_bytes):
+                            logger.info(f"  Camera {camera_id + 1}: Not present (UID: 0x{uid_hex})")
+                            if self._runlog_active:
+                                run_logger.info(f"  Camera {camera_id + 1}: Not present (UID: 0x{uid_hex})")
+                            self.configLog.emit(f"Camera {camera_id + 1}: Not present")
+                        else:
+                            logger.info(f"  Camera {camera_id + 1}: UID = 0x{uid_hex}")
+                            if self._runlog_active:
+                                run_logger.info(f"  Camera {camera_id + 1}: UID = 0x{uid_hex}")
+                            # Emit to configLog for UI display during configuration phase
+                            self.configLog.emit(f"Camera {camera_id + 1} UID: 0x{uid_hex}")
+                    except Exception as e:
+                        mutex_idx = 1 if sensor_name == "right" else 0
+                        if self._sensor_mutex[mutex_idx].tryLock():
+                            self._sensor_mutex[mutex_idx].unlock()
+                        logger.error(f"Error reading UID for camera {camera_id + 1} on {sensor_name} sensor: {e}")
+                        if self._runlog_active:
+                            run_logger.error(f"Error reading UID for camera {camera_id + 1} on {sensor_name} sensor: {e}")
+            
+            logger.info("=== Camera UID read complete ===")
+            if self._runlog_active:
+                run_logger.info("=== Camera UID read complete ===")
+        except Exception as e:
+            logger.error(f"Error reading camera UIDs: {e}")
+            if self._runlog_active:
+                run_logger.error(f"Error reading camera UIDs: {e}")
+
     @pyqtSlot(int, int)
     def startConfigureCameraSensors(self, left_camera_mask:int, right_camera_mask:int):
         if self._config_thread: return
