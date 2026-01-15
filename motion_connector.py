@@ -808,6 +808,9 @@ class MOTIONConnector(QObject):
             right_path = ""
 
             try:
+                # Start the per-run log now before any other logging
+                self._start_runlog()
+                
                 ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 logger.info("Preparing capture…")
                 self.captureLog.emit("Preparing capture…")
@@ -882,8 +885,7 @@ class MOTIONConnector(QObject):
                     self._console_mutex.unlock()
                     raise RuntimeError(err)
                 
-                # Start the per-run log now
-                self._start_runlog()
+
                 logger.info("TRIGGER STARTED")
                 
                 self._console_mutex.unlock()
