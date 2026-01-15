@@ -532,7 +532,7 @@ Rectangle {
                         Slider {
                             id: durationSlider
                             from: 16
-                            to: advancedSensors ? 1800 : 120
+                            to: advancedSensors ? 21600 : 120
                             stepSize: 1
                             snapMode: Slider.SnapOnRelease
                             value: controlPanel.durationSec
