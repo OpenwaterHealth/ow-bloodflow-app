@@ -375,23 +375,7 @@ Rectangle {
                         Layout.fillHeight: true
                         Layout.alignment: Qt.AlignVCenter | Qt.AlignHCenter
 
-                        RowLayout {
-                            spacing: 30
-                            Layout.alignment: Qt.AlignVCenter | Qt.AlignHCenter
-
-                            Text {
-                                id: statusText
-                                text: "System State: " + (MOTIONInterface.state === 0 ? "Disconnected"
-                                                : MOTIONInterface.state === 1 ? "Sensor Connected"
-                                                : MOTIONInterface.state === 2 ? "Console Connected"
-                                                : MOTIONInterface.state === 3 ? "Ready"
-                                                : "Running")
-                                font.pixelSize: 16
-                                color: "#BDC3C7"
-                                horizontalAlignment: Text.AlignRight
-                                Layout.alignment: Qt.AlignRight
-                            }
-                        }
+                        Item { Layout.fillWidth: true }
 
                         RowLayout {
                             spacing: 30
@@ -636,7 +620,6 @@ Rectangle {
 
         function onSignalConnected(descriptor, port) {
             console.log(descriptor + " connected on " + port);
-            statusText.text = "Connected: " + descriptor + " on " + port;
 
             if ((descriptor || "").toUpperCase() === "CONSOLE") {
                 
@@ -645,8 +628,6 @@ Rectangle {
 
         function onSignalDisconnected(descriptor, port) {
             console.log(descriptor + " disconnected from " + port);
-            statusText.text = "Disconnected: " + descriptor + " from " + port;
-            
 
             if ((descriptor || "").toUpperCase() === "CONSOLE") {
             }
