@@ -13,6 +13,8 @@ import time
 import random
 import re
 import string
+import platform
+import socket
 
 from motion_singleton import motion_interface  
 from processing.data_processing import DataProcessor 
@@ -20,8 +22,6 @@ from utils.resource_path import resource_path
 import struct
 import numpy as np
 import pandas as pd
-
-
 
 # constants for calculations
 SCALE_V = 0.0909
@@ -33,9 +33,8 @@ R_3 = 51100 #(R225)
 TEC_VOLTAGE_DEFAULT = 1.1  # volts
 
 # Global loggers - will be configured by _configure_logging method
-logger = None
-run_logger = None
-
+logger = logging.getLogger("bloodflow-app.connector")
+run_logger = logging.getLogger("bloodflow-app.runlog")
 
 # Define system states
 DISCONNECTED = 0
@@ -128,13 +127,13 @@ class MOTIONConnector(QObject):
         self._console_status_thread = None
 
         self._console_mutex = QRecursiveMutex()
-        
-        # Sensor mutexes for left and right sensors (following console mutex pattern)
+
         self._sensor_mutex = [QRecursiveMutex() , QRecursiveMutex()] # mutexes in [left,right] order
 
         self._tcm = 0.0
         self._tcl = 0.0
         self._pdc = 0.0
+        self._telemetry_lock = threading.Lock()
 
         self._tec_voltage   = 0.0
         self._tec_temp      = 0.0
@@ -151,6 +150,10 @@ class MOTIONConnector(QObject):
         self._runlog_handler = None         # logging.FileHandler or None
         self._runlog_path = None            # str or None
         self._runlog_active = False         # bool
+        self._runlog_csv_path = None        # str or None
+        self._runlog_csv_file = None        # open file handle or None
+        self._runlog_csv_writer = None      # csv.writer or None
+        self._runlog_csv_lock = threading.Lock()
 
         default_dir = os.path.join(os.getcwd(), "scan_data")
         os.makedirs(default_dir, exist_ok=True)
@@ -169,55 +172,8 @@ class MOTIONConnector(QObject):
 
 
     def _configure_logging(self, log_level):
-        """Configure logging for motion_connector with the specified log level."""
-        global logger, run_logger
-        
-        # Get logger instance
-        logger = logging.getLogger("ow-testapp")
-        logger.setLevel(log_level)
-        
-        # Common formatter
-        formatter = logging.Formatter(
-            '%(asctime)s - %(levelname)s - %(message)s'
-        )
-        
-        # Configure handlers - ensure console output for debug messages
-        if not logger.hasHandlers():
-            # Check if root logger has handlers (main.py configured logging)
-            root_logger = logging.getLogger()
-            if root_logger.handlers:
-                # Let messages propagate to root logger (main.py handles console/file output)
-                logger.propagate = True
-            else:
-                # No root handlers, set up our own console handler
-                console_handler = logging.StreamHandler()
-                console_handler.setLevel(log_level)
-                console_handler.setFormatter(formatter)
-                logger.addHandler(console_handler)
 
-                # Also add file handler for local logging
-                run_dir = os.path.join(os.getcwd(), "app-logs")
-                os.makedirs(run_dir, exist_ok=True)
-
-                # Build timestamp like 20251029_124455
-                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-                # ow-testapp-<ts>.log
-                logfile_path = os.path.join(run_dir, f"ow-testapp-{ts}.log")
-
-                file_handler = logging.FileHandler(logfile_path, mode='w', encoding='utf-8')
-                file_handler.setLevel(log_level)
-                file_handler.setFormatter(formatter)
-                logger.addHandler(file_handler)
-
-                # Optional: announce where we're logging
-                logger.info(f"logging to {logfile_path}")
-
-        # Run logger (ONLY writes to run.log, no console spam)
-        run_logger = logging.getLogger("runlog")
-        run_logger.setLevel(log_level)
-        run_logger.propagate = False
-
+        run_logger.propagate = True
         # --- Load RT model (10K3CG_R-T.CSV) for TEC lookup ---
         try:
             # Look for file in the repository's models directory next to this file
@@ -238,7 +194,6 @@ class MOTIONConnector(QObject):
             self._data_RT = None
             logger.error(f"Failed to load RT model: {e}")
 
-        
     def _start_runlog(self):
         """
         Create a dedicated run log file and attach it to the global logger
@@ -256,11 +211,13 @@ class MOTIONConnector(QObject):
         # Timestamped filename for this specific trigger session
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self._runlog_path = os.path.join(run_dir, f"run-{ts}.log")
+        self._runlog_csv_path = os.path.join(run_dir, f"run-{ts}.csv")
 
-        # Create handler
+        # Create handler with immediate flushing (delay=False ensures file is opened immediately)
         run_handler = logging.FileHandler(self._runlog_path,
                                           mode='w',
-                                          encoding='utf-8')
+                                          encoding='utf-8',
+                                          delay=False)
         # Match the global formatter you already defined at top of file
         run_handler.setFormatter(logging.Formatter(
             '%(asctime)s - %(levelname)s - %(message)s'
@@ -270,10 +227,25 @@ class MOTIONConnector(QObject):
 
         # Attach this handler to run_logger ONLY
         run_logger.addHandler(run_handler)
+        
+        # Ensure run_logger has a level set (in case it wasn't configured)
+        if run_logger.level == logging.NOTSET:
+            run_logger.setLevel(logging.INFO)
 
         # Save so we can remove/close it later
         self._runlog_handler = run_handler
         self._runlog_active = True
+
+        # Initialize CSV telemetry log (same basename as run log)
+        try:
+            self._runlog_csv_file = open(self._runlog_csv_path, "w", newline="", encoding="utf-8")
+            self._runlog_csv_writer = csv.writer(self._runlog_csv_file)
+            self._runlog_csv_writer.writerow(["timestamp", "unix_ms", "tcm", "tcl", "pdc"])
+            self._runlog_csv_file.flush()
+        except Exception as e:
+            logger.error(f"Failed to open run CSV log: {e}")
+            self._runlog_csv_file = None
+            self._runlog_csv_writer = None
 
         # --- Gather version info for header ---
         # SDK version (MOTION SDK / sensor SDK)
@@ -284,7 +256,8 @@ class MOTIONConnector(QObject):
 
         # App version (from constant we defined at top)
         try:
-            app_ver = "1.2.6" #TODO: need to read this from main
+            from main import APP_VERSION
+            app_ver = APP_VERSION # from main.py
         except Exception as e:
             app_ver = f"ERROR({e})"
 
@@ -302,12 +275,25 @@ class MOTIONConnector(QObject):
         #
         # Write session header into the run log
         #
-        run_logger.info("========== RUN START ==========")
+        run_logger.info("=" * 80)
+        run_logger.info("RUN START")
+        run_logger.info("=" * 80)
         run_logger.info(f"App Version: {app_ver}")
         run_logger.info(f"SDK Version: {sdk_ver}")
         run_logger.info(f"Console Firmware: {fw_ver}")
-        run_logger.info("================================")
 
+        # Log system information, device information, laser information, and camera UIDs
+        self.log_system_information(logger)
+        self.log_device_information()
+        self.log_laser_information()
+        # self._read_and_log_camera_uids()
+        
+        # Flush the handler to ensure header is written immediately
+        try:
+            self._runlog_handler.flush()
+        except Exception as e:
+            logger.error(f"Error flushing run log handler after header: {e}")
+        
         # Also drop a breadcrumb to the main logger so humans see it in console/UI log:
         logger.info(f"[RUNLOG] started -> {self._runlog_path}")
 
@@ -324,6 +310,12 @@ class MOTIONConnector(QObject):
 
         # Also note it in the main logger (console/app log)
         logger.info(f"[RUNLOG] stopped -> {self._runlog_path}")
+
+        # Flush the handler before removing it to ensure all data is written
+        try:
+            self._runlog_handler.flush()
+        except Exception as e:
+            logger.error(f"Error flushing run log handler: {e}")
 
         # 1. Remove handler from run_logger
         try:
@@ -342,7 +334,168 @@ class MOTIONConnector(QObject):
         self._runlog_path = None
         self._runlog_active = False
 
-# --- GETTERS/SETTERS FOR Qt PROPERTIES ---
+        # Close CSV telemetry log
+        with self._runlog_csv_lock:
+            if self._runlog_csv_file is not None:
+                try:
+                    self._runlog_csv_file.flush()
+                except Exception as e:
+                    logger.error(f"Error flushing run CSV log: {e}")
+                try:
+                    self._runlog_csv_file.close()
+                except Exception as e:
+                    logger.error(f"Error closing run CSV log: {e}")
+            self._runlog_csv_file = None
+            self._runlog_csv_writer = None
+            self._runlog_csv_path = None
+
+    def _write_runlog_csv_sample(self, tcm: int, tcl: int, pdc: float, timestamp: float):
+        if not self._runlog_active or self._runlog_csv_writer is None:
+            return
+        iso_ts = datetime.datetime.fromtimestamp(timestamp).isoformat(timespec="milliseconds")
+        unix_ms = int(timestamp * 1000)
+        with self._runlog_csv_lock:
+            if self._runlog_csv_writer is None:
+                return
+            try:
+                self._runlog_csv_writer.writerow([iso_ts, unix_ms, tcm, tcl, f"{pdc:.3f}"])
+                self._runlog_csv_file.flush()
+            except Exception as e:
+                logger.error(f"Failed to write run CSV sample: {e}")
+
+    def log_system_information(self,logger):
+        """Log system information including hostname, OS details, and hardware information."""
+        try:
+            hostname = socket.gethostname()
+            run_logger.info("=" * 80)
+            run_logger.info("SYSTEM INFORMATION")
+            run_logger.info("=" * 80)
+            run_logger.info(f"Hostname: {hostname}")
+            run_logger.info(f"Platform: {platform.platform()}")
+            run_logger.info(f"System: {platform.system()}")
+            run_logger.info(f"Release: {platform.release()}")
+            run_logger.info(f"Version: {platform.version()}")
+            run_logger.info(f"Architecture: {platform.machine()}")
+            run_logger.info(f"Processor: {platform.processor()}")
+            
+            # Additional hardware information
+            if platform.system() == "Windows":
+                try:
+                    import ctypes
+                    # Get total physical memory
+                    class MEMORYSTATUSEX(ctypes.Structure):
+                        _fields_ = [
+                            ("dwLength", ctypes.c_ulong),
+                            ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong),
+                            ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong),
+                            ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong),
+                            ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                        ]
+                    
+                    memStatus = MEMORYSTATUSEX()
+                    memStatus.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+                    ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(memStatus))
+                    total_memory_gb = memStatus.ullTotalPhys / (1024**3)
+                    run_logger.info(f"Total Physical Memory: {total_memory_gb:.2f} GB")
+                except Exception:
+                    pass
+            
+            # Python version
+            run_logger.info(f"Python Version: {platform.python_version()}")
+            run_logger.info(f"Python Implementation: {platform.python_implementation()}")
+
+        except Exception as e:
+            run_logger.warning(f"Failed to log system information: {e}")
+
+    def log_device_information(self):
+        """Log information about connected sensors and console to the run log."""
+        try:
+            run_logger.info("=" * 80)
+            run_logger.info("DEVICE INFORMATION")
+            run_logger.info("=" * 80)
+            
+            # Console information
+            if self._consoleConnected:
+                try:
+                    self._console_mutex.lock()
+                    try:
+                        fw_version = motion_interface.console_module.get_version()
+                        hw_id = motion_interface.console_module.get_hardware_id()
+                        device_id = base58.b58encode(bytes.fromhex(hw_id)).decode()
+                        run_logger.info(f"Console - Firmware: {fw_version}, Device ID: {device_id}")
+                    finally:
+                        self._console_mutex.unlock()
+                except Exception as e:
+                    run_logger.warning(f"Console - Failed to get device info: {e}")
+            else:
+                run_logger.info("Console - Not connected")
+            
+            # Left sensor information
+            if self._leftSensorConnected:
+                try:
+                    sensor = motion_interface.sensors.get("left")
+                    if sensor is not None:
+                        self._sensor_mutex[0].lock()
+                        try:
+                            fw_version = sensor.get_version()
+                            hw_id = sensor.get_hardware_id()
+                            device_id = base58.b58encode(bytes.fromhex(hw_id)).decode()
+                            run_logger.info(f"Left Sensor - Firmware: {fw_version}, Device ID: {device_id}")
+                        finally:
+                            self._sensor_mutex[0].unlock()
+                    else:
+                        run_logger.warning("Left Sensor - Sensor object is None")
+                except Exception as e:
+                    run_logger.warning(f"Left Sensor - Failed to get device info: {e}")
+            else:
+                run_logger.info("Left Sensor - Not connected")
+            
+            # Right sensor information
+            if self._rightSensorConnected:
+                try:
+                    sensor = motion_interface.sensors.get("right")
+                    if sensor is not None:
+                        self._sensor_mutex[1].lock()
+                        try:
+                            fw_version = sensor.get_version()
+                            hw_id = sensor.get_hardware_id()
+                            device_id = base58.b58encode(bytes.fromhex(hw_id)).decode()
+                            run_logger.info(f"Right Sensor - Firmware: {fw_version}, Device ID: {device_id}")
+                        finally:
+                            self._sensor_mutex[1].unlock()
+                    else:
+                        run_logger.warning("Right Sensor - Sensor object is None")
+                except Exception as e:
+                    run_logger.warning(f"Right Sensor - Failed to get device info: {e}")
+            else:
+                run_logger.info("Right Sensor - Not connected")
+            
+
+        except Exception as e:
+            run_logger.error(f"Failed to log device information: {e}")
+
+    def log_laser_information(self):
+        """Log laser information to the run log."""
+        try:
+            run_logger.info("=" * 80)
+            run_logger.info("LASER INFORMATION")
+            run_logger.info("=" * 80)
+
+            # print laser parameters as read from the device
+            laser_params = self.laser_params
+            for param in laser_params:
+                run_logger.info(f"Mux Index: {param['muxIdx']}, Channel: {param['channel']}, I2C Address: {param['i2cAddr']}, Offset: {param['offset']}, Data to Send: {param['dataToSend']}")
+            run_logger.info("=" * 80)
+
+
+        except Exception as e:
+            run_logger.error(f"Failed to log laser information: {e}")
+    
+    # --- GETTERS/SETTERS FOR Qt PROPERTIES ---
     def getSubjectId(self) -> str:
         return self._subject_id
 
@@ -386,6 +539,12 @@ class MOTIONConnector(QObject):
     def safetyFailure(self):
         """Expose Console connection status to QML."""
         return self._safetyFailure
+    
+    @safetyFailure.setter
+    def safetyFailure(self, value: bool):
+        if self._safetyFailure != value:
+            self._safetyFailure = value
+            self.safetyFailureStateChanged.emit()
 
     @pyqtProperty(int, notify=stateChanged)
     def state(self):
@@ -396,11 +555,11 @@ class MOTIONConnector(QObject):
     def triggerState(self):
         return self._trigger_state
     
-# --- DEVICE CONNECTION / DISCONNECTION / STATE MANAGEMENT METHODS ---
+    # --- DEVICE CONNECTION / DISCONNECTION / STATE MANAGEMENT METHODS ---
     @pyqtSlot(str, str)
     def on_connected(self, descriptor, port):
         """Handle device connection."""
-        logging.info(f"Device connected: {descriptor} on port {port}")
+        logger.info(f"Device connected: {descriptor} on port {port}")
         if descriptor.upper() == "SENSOR_LEFT":
             self._leftSensorConnected = True
         if descriptor.upper() == "SENSOR_RIGHT":
@@ -441,7 +600,7 @@ class MOTIONConnector(QObject):
                 self._console_status_thread.stop()
                 self._console_status_thread = None
 
-        logging.info(f"Device disconnected: {descriptor} on port {port}")
+        logger.info(f"Device disconnected: {descriptor} on port {port}")
         self.signalDisconnected.emit(descriptor, port)
         self.connectionStatusChanged.emit() 
         self.update_state()
@@ -478,7 +637,7 @@ class MOTIONConnector(QObject):
             self._console_status_thread.stop()
             self._console_status_thread = None
 
-# --- SCAN MANAGEMENT METHODS ---
+    # --- SCAN MANAGEMENT METHODS ---
     @pyqtSlot(result=list)
     def _load_laser_params(self, config_dir):
         
@@ -622,7 +781,7 @@ class MOTIONConnector(QObject):
         suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
         return f"ow{suffix}"
         
-# --- CONSOLE COMMUNICATION METHODS ---
+    # --- CONSOLE COMMUNICATION METHODS ---
     @pyqtSlot()
     def queryConsoleInfo(self):
         """Fetch and emit device information."""
@@ -695,6 +854,9 @@ class MOTIONConnector(QObject):
             right_path = ""
 
             try:
+                # Start the per-run log now before any other logging
+                self._start_runlog()
+                
                 ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 logger.info("Preparing capture…")
                 self.captureLog.emit("Preparing capture…")
@@ -769,8 +931,7 @@ class MOTIONConnector(QObject):
                     self._console_mutex.unlock()
                     raise RuntimeError(err)
                 
-                # Start the per-run log now
-                self._start_runlog()
+
                 logger.info("TRIGGER STARTED")
                 
                 self._console_mutex.unlock()
@@ -949,7 +1110,6 @@ class MOTIONConnector(QObject):
                 for i, v in enumerate(self._pdu_vals[8:])
             ]
 
-            # Run-log (concise)
             run_logger.info(
                 "PDU MON ADC0 vals: %s",
                 " ".join(f"{(v/SCALE_V):.3f}" for v in self._pdu_vals[:8])
@@ -1008,25 +1168,17 @@ class MOTIONConnector(QObject):
                 
             status_text = f"SE: 0x{statuses['SE']:02X}, SO: 0x{statuses['SO']:02X}"
             if (statuses["SE"] & 0x0F) == 0 and (statuses["SO"] & 0x0F) == 0:
-                logging.info(f"No laser safety failure detected")
                 if self._safetyFailure:
-                    self._safetyFailure = False
-                    self.safetyFailureStateChanged.emit(False)
-                    logging.info(f"No laser safety failure detected")
+                    self.safetyFailure(False)
             else:
                 if not self._safetyFailure:
-                    self._safetyFailure = True
+                    self.safetyFailure(True)
                     self.stopTrigger()
                     self.laserStateChanged.emit(False)
-                    self.safetyFailureStateChanged.emit(True)  
-                    logging.error(f"Failure Detected: {status_text}")
-
-            # Emit combined status if needed
-            
-            logging.info(f"Status QUERY: {status_text}")
 
         except Exception as e:
-            logging.error(f"Console status query failed: {e}")
+            logger.error(f"Console status query failed: {e}")
+            self.safetyFailure(True)
 
     @pyqtSlot(str, int, int, int, int, int, result=QVariant)
     def i2cReadBytes(self, target: str, mux_idx: int, channel: int, i2c_addr: int, offset: int, data_len: int):
@@ -1220,7 +1372,77 @@ class MOTIONConnector(QObject):
         self._console_mutex.unlock()
         return True
     
-# --- SENSOR COMMUNICATION METHODS ---
+    # --- SENSOR COMMUNICATION METHODS ---
+    def _read_and_log_camera_uids(self):
+        """
+        Read and log security UIDs for all connected cameras.
+        This is called at the beginning of a scan.
+        Logs to both the main logger and run_logger (if active).
+        """
+        try:
+            logger.info("=== Reading camera security UIDs ===")
+            if self._runlog_active:
+                run_logger.info("=== Reading camera security UIDs ===")
+            
+            # Get all sensors (left and right)
+            sensors = []
+            if self._leftSensorConnected and "left" in motion_interface.sensors:
+                sensors.append(("left", motion_interface.sensors["left"]))
+            if self._rightSensorConnected and "right" in motion_interface.sensors:
+                sensors.append(("right", motion_interface.sensors["right"]))
+            
+            if not sensors:
+                logger.warning("No sensors connected, cannot read camera UIDs")
+                if self._runlog_active:
+                    run_logger.warning("No sensors connected, cannot read camera UIDs")
+                return
+            
+            # Read UIDs for all cameras (0-7) on each connected sensor
+            for sensor_name, sensor in sensors:
+                logger.info(f"Reading camera UIDs from {sensor_name} sensor...")
+                if self._runlog_active:
+                    run_logger.info(f"Reading camera UIDs from {sensor_name} sensor...")
+                
+                for camera_id in range(8):
+                    try:
+                        # Lock the appropriate mutex
+                        mutex_idx = 1 if sensor_name == "right" else 0
+                        self._sensor_mutex[mutex_idx].lock()
+                        
+                        uid_bytes = sensor.read_camera_security_uid(camera_id)
+                        self._sensor_mutex[mutex_idx].unlock()
+                        
+                        # Format UID as hex string
+                        uid_hex = ''.join(f'{b:02X}' for b in uid_bytes)
+                        
+                        # Check if UID is all zeros (camera not present)
+                        if all(b == 0 for b in uid_bytes):
+                            logger.info(f"  Camera {camera_id + 1}: Not present (UID: 0x{uid_hex})")
+                            if self._runlog_active:
+                                run_logger.info(f"  Camera {camera_id + 1}: Not present (UID: 0x{uid_hex})")
+                            self.configLog.emit(f"Camera {camera_id + 1}: Not present")
+                        else:
+                            logger.info(f"  Camera {camera_id + 1}: UID = 0x{uid_hex}")
+                            if self._runlog_active:
+                                run_logger.info(f"  Camera {camera_id + 1}: UID = 0x{uid_hex}")
+                            # Emit to configLog for UI display during configuration phase
+                            self.configLog.emit(f"Camera {camera_id + 1} UID: 0x{uid_hex}")
+                    except Exception as e:
+                        mutex_idx = 1 if sensor_name == "right" else 0
+                        if self._sensor_mutex[mutex_idx].tryLock():
+                            self._sensor_mutex[mutex_idx].unlock()
+                        logger.error(f"Error reading UID for camera {camera_id + 1} on {sensor_name} sensor: {e}")
+                        if self._runlog_active:
+                            run_logger.error(f"Error reading UID for camera {camera_id + 1} on {sensor_name} sensor: {e}")
+            
+            logger.info("=== Camera UID read complete ===")
+            if self._runlog_active:
+                run_logger.info("=== Camera UID read complete ===")
+        except Exception as e:
+            logger.error(f"Error reading camera UIDs: {e}")
+            if self._runlog_active:
+                run_logger.error(f"Error reading camera UIDs: {e}")
+
     @pyqtSlot(int, int)
     def startConfigureCameraSensors(self, left_camera_mask:int, right_camera_mask:int):
         if self._config_thread: return
@@ -1451,7 +1673,7 @@ class MOTIONConnector(QObject):
             logger.error(f"Error getting fan control status: {e}")
             return False
 
-# --- BLOODFLOW VISUALIZATION / POST-PROCESSING METHODS ---
+    # --- BLOODFLOW VISUALIZATION / POST-PROCESSING METHODS ---
     @pyqtSlot(str, str, float, float, bool, result=bool)
     def visualize_bloodflow(self, left_csv: str, right_csv: str, t1: float = 0.0, t2: float = 120.0, plot_contrast: bool = False) -> bool:
         left_csv  = (left_csv or "").strip()
@@ -1626,7 +1848,7 @@ class MOTIONConnector(QObject):
         self.postLog.emit("Cancel requested.")
         self._post_cancel.set()
 
-# --- ERROR HANDLING METHODS / MISCELLANEOUS METHODS ---
+    # --- ERROR HANDLING METHODS / MISCELLANEOUS METHODS ---
     @pyqtSlot(str)
     def emitError(self, msg):
         self.errorOccurred.emit(msg)
@@ -1652,7 +1874,7 @@ class MOTIONConnector(QObject):
                 csv_writer = csv.writer(f)
                 # Write CSV header
                 csv_writer.writerow(
-                    ["cam_id", "frame_id", "timestamp_s", *range(1024), "temperature", "sum"]
+                    ["cam_id", "frame_id", "timestamp_s", *range(1024), "temperature", "sum", "tcm", "tcl", "pdc"]
                 )
                 
                 # Buffer to accumulate incoming data
@@ -1660,7 +1882,13 @@ class MOTIONConnector(QObject):
                 
                 # Parse and write data using the helper function
                 proc = DataProcessor()
-                rows_written = proc.parse_stream_to_csv(q, stop_evt, csv_writer, buffer_accumulator)
+                def _extra_cols():
+                    with self._telemetry_lock:
+                        return [int(self._tcm), int(self._tcl), f"{float(self._pdc):.3f}"]
+
+                rows_written = proc.parse_stream_to_csv(
+                    q, stop_evt, csv_writer, buffer_accumulator, extra_cols_fn=_extra_cols
+                )
                 
                 logger.info(f"Wrote {rows_written} rows to {filename}")
                 
@@ -1856,7 +2084,6 @@ class ConsoleStatusThread(QThread):
     def run(self):
         """Run loop that calls readSafetyStatus() every 1000ms when console is connected."""
         logger.info("Console status thread started")
-        print("Console status thread started")
         while self._running:
             # Check if console is connected before reading safety status
             if self.connector._consoleConnected:
@@ -1886,31 +2113,30 @@ class ConsoleStatusThread(QThread):
                     tcl_raw = self.connector.i2cReadBytes("CONSOLE", muxIdx, 4, i2cAddr, 0x10, 4)
                     pdc_raw = self.connector.i2cReadBytes("CONSOLE", muxIdx, 7, i2cAddr, 0x1C, 2)
                     
-                    logging.info(f"tcm_raw: {tcm_raw} tcl_raw: {tcl_raw} pdc_raw: {pdc_raw}")
+                    logger.debug(f"tcm_raw: {tcm_raw} tcl_raw: {tcl_raw} pdc_raw: {pdc_raw}")
 
                     if tcl_raw and pdc_raw:
                         tcm = int(tcm_raw)
                         tcl = int.from_bytes(tcl_raw, byteorder='little')
                         pdc = int.from_bytes(pdc_raw, byteorder='little') * 1.9  # mA
+                        ts = time.time()
 
-                        if (
-                            tcl != self.connector._tcl or
-                            tcm != self.connector._tcm or
-                            pdc != self.connector._pdc
-                        ):
-                            self.connector._tcl = tcl
-                            self.connector._tcm = tcm
-                            self.connector._pdc = pdc
-
-                        logging.info(
-                            f"Analog Values - TCM: {tcm}, TCL: {tcl}, PDC: {pdc:.3f} mA"
-                        )
+                        with self.connector._telemetry_lock:
+                            if (
+                                tcl != self.connector._tcl or
+                                tcm != self.connector._tcm or
+                                pdc != self.connector._pdc
+                            ):
+                                self.connector._tcl = tcl
+                                self.connector._tcm = tcm
+                                self.connector._pdc = pdc
 
                         run_logger.info(
                             f"Analog Values - TCM: {tcm}, TCL: {tcl}, PDC: {pdc:.3f}"
                         )
+                        self.connector._write_runlog_csv_sample(tcm, tcl, pdc, ts)
                     else:
-                        logging.error("Failed to read analog telemetry values")
+                        logger.error("Failed to read analog telemetry values")
 
                 except Exception as e:
                     logger.error(f"Console status query failed: {e}")

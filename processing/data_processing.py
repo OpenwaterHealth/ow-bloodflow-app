@@ -10,7 +10,6 @@ import threading
 import logging
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)  # or INFO depending on what you want to see
 
 
 try:
@@ -188,7 +187,7 @@ class DataProcessor:
         total_packets = packet_ok + packet_fail + crc_failure + other_fail + bad_header_fail
         print(f"Parsed {total_packets} packets, {packet_ok} OK")
 
-    def parse_stream_to_csv(self, q: queue.Queue, stop_evt: threading.Event, csv_writer, buffer_accumulator: bytearray):
+    def parse_stream_to_csv(self, q: queue.Queue, stop_evt: threading.Event, csv_writer, buffer_accumulator: bytearray, extra_cols_fn=None):
         """
         Parse streaming binary data and write to CSV.
         This function is called to process data from the queue.
@@ -217,7 +216,8 @@ class DataProcessor:
                     ts_val = timestamp_sec if timestamp_sec is not None else 0.0
                     for cam_id, hist in hists.items():
                         row_sum = int(hist.sum(dtype=np.uint64))
-                        row = [cam_id, ids[cam_id], ts_val, *hist.tolist(), temps[cam_id], row_sum]
+                        extra_cols = extra_cols_fn() if extra_cols_fn else []
+                        row = [cam_id, ids[cam_id], ts_val, *hist.tolist(), temps[cam_id], row_sum, *extra_cols]
                         csv_writer.writerow(row)
                         rows_written += 1
                         

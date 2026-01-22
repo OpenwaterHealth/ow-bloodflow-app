@@ -375,23 +375,7 @@ Rectangle {
                         Layout.fillHeight: true
                         Layout.alignment: Qt.AlignVCenter | Qt.AlignHCenter
 
-                        RowLayout {
-                            spacing: 30
-                            Layout.alignment: Qt.AlignVCenter | Qt.AlignHCenter
-
-                            Text {
-                                id: statusText
-                                text: "System State: " + (MOTIONInterface.state === 0 ? "Disconnected"
-                                                : MOTIONInterface.state === 1 ? "Sensor Connected"
-                                                : MOTIONInterface.state === 2 ? "Console Connected"
-                                                : MOTIONInterface.state === 3 ? "Ready"
-                                                : "Running")
-                                font.pixelSize: 16
-                                color: "#BDC3C7"
-                                horizontalAlignment: Text.AlignRight
-                                Layout.alignment: Qt.AlignRight
-                            }
-                        }
+                        Item { Layout.fillWidth: true }
 
                         RowLayout {
                             spacing: 30
@@ -532,7 +516,7 @@ Rectangle {
                         Slider {
                             id: durationSlider
                             from: 16
-                            to: advancedSensors ? 1800 : 120
+                            to: advancedSensors ? 43200 : 120
                             stepSize: 1
                             snapMode: Slider.SnapOnRelease
                             value: controlPanel.durationSec
@@ -558,7 +542,7 @@ Rectangle {
                             onEditingFinished: {
                                 let v = parseInt(text);
                                 if (isNaN(v)) v = controlPanel.durationSec;
-                                v = advancedSensors? Math.max(0, Math.min(1800, v)) : Math.max(0, Math.min(120, v));
+                                v = advancedSensors? Math.max(0, Math.min(43200, v)) : Math.max(0, Math.min(120, v));
                                 controlPanel.durationSec = v;
                                 durationSlider.value = v;
                                 text = String(v);
@@ -629,9 +613,13 @@ Rectangle {
     Connections {
         target: MOTIONInterface
 
+        // Forward captureLog messages to QML console.log (which gets logged via qt_message_handler)
+        function onCaptureLog(line) {
+            console.log("Capture log: "+line)
+        }
+
         function onSignalConnected(descriptor, port) {
             console.log(descriptor + " connected on " + port);
-            statusText.text = "Connected: " + descriptor + " on " + port;
 
             if ((descriptor || "").toUpperCase() === "CONSOLE") {
                 
@@ -640,8 +628,6 @@ Rectangle {
 
         function onSignalDisconnected(descriptor, port) {
             console.log(descriptor + " disconnected from " + port);
-            statusText.text = "Disconnected: " + descriptor + " from " + port;
-            
 
             if ((descriptor || "").toUpperCase() === "CONSOLE") {
             }
@@ -714,6 +700,7 @@ Rectangle {
             "LaserPulseDelayUsec": 100,
             "LaserPulseWidthUsec": 500,
             "LaserPulseSkipInterval": 600,
+            "LaserPulseSkipDelayUsec": 1800,
             "EnableSyncOut": true,
             "EnableTaTrigger": true
         })
@@ -727,7 +714,10 @@ Rectangle {
             if (!scanDialog.visible) scanDialog.open();
             scanDialog.progress = pct;
         }
-        onMessageOut: function(line) { scanDialog.appendLog(line) }
+        onMessageOut: function(line) { 
+            scanDialog.appendLog(line)
+            console.log("Scan message: " + line)
+        }
         onScanFinished: function(ok, err, left, right) {
 
             if (err === "Canceled") {

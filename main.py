@@ -4,32 +4,53 @@ import asyncio
 import argparse
 import warnings
 import logging
+import datetime
 
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication   
 from PyQt6.QtWidgets import QApplication   
 from PyQt6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
+from PyQt6.QtCore import qInstallMessageHandler, QtMsgType
 from qasync import QEventLoop
 
 from motion_connector import MOTIONConnector
 from pathlib import Path
 
 
-APP_VERSION = "0.4-pre"
+APP_VERSION = "0.4.1"
 
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.ERROR)  # or INFO depending on what you want to see
+logger = logging.getLogger("openmotion.bloodflow-app")
+logger.setLevel(logging.INFO)  # or INFO depending on what you want to see
 
 # Suppress PyQt6 DeprecationWarnings related to SIP
 warnings.simplefilter("ignore", DeprecationWarning)
+
+# Wire up the things that get logged out of QT app to the proper logs
+def qt_message_handler(msg_type, context, message):
+    """Custom Qt message handler to forward QML console.log() messages to the run log."""
+    # Map Qt message types to logging levels
+    log_level_map = {
+        QtMsgType.QtDebugMsg: logging.DEBUG,
+        QtMsgType.QtInfoMsg: logging.INFO,
+        QtMsgType.QtWarningMsg: logging.WARNING,
+        QtMsgType.QtCriticalMsg: logging.ERROR,
+        QtMsgType.QtFatalMsg: logging.CRITICAL,
+    }
+    
+    # Get the logging level (default to INFO for console.log)
+    log_level = log_level_map.get(msg_type, logging.INFO)
+    
+    qml_message = f"QML: {message}"
+    
+    logger = logging.getLogger("openmotion.bloodflow-app.qml-console")
+    logger.setLevel(logging.INFO)  # or INFO depending on what you want to see
+    logger.info(qml_message)
 
 def resource_path(rel: str) -> str:
     import sys, os
     base = getattr(sys, "_MEIPASS", os.path.abspath(os.path.dirname(sys.executable if getattr(sys,"frozen",False) else __file__)))
     return os.path.join(base, rel)
-
-
 
 def main():
     os.environ["QT_QUICK_CONTROLS_STYLE"] = "Material"
@@ -41,6 +62,37 @@ def main():
     parser.add_argument("--advanced-sensors", action="store_true")
     my_args, _unknown = parser.parse_known_args(sys.argv[1:])
 
+    # Configure logging
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+    )
+    #Configure console logging
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    #Configure file logging
+    run_dir = os.path.join(os.getcwd(), "app-logs") # Also add file handler for local logging
+    os.makedirs(run_dir, exist_ok=True)
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S") # Build timestamp like 20251029_124455
+    logfile_path = os.path.join(run_dir, f"ow-bloodflowapp-{ts}.log")
+
+    file_handler = logging.FileHandler(logfile_path, mode='w', encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    logger.info(f"logging to {logfile_path}")
+    
+    # Configure the SDK logger hierarchy to use the same handlers
+    sdk_logger = logging.getLogger("openmotion.sdk")
+    sdk_logger.setLevel(logging.INFO)
+    sdk_logger.addHandler(console_handler)
+    sdk_logger.addHandler(file_handler)
+    sdk_logger.propagate = False  # Don't propagate to root, use our handlers
+
+    qInstallMessageHandler(qt_message_handler)
+    
     app = QApplication(sys.argv) 
         
     # Windows-specific: Set application user model ID for proper taskbar grouping
@@ -73,7 +125,7 @@ def main():
     engine.load(resource_path("main.qml"))
 
     if not engine.rootObjects():
-        print("Error: Failed to load QML file")
+        logger.error("Error: Failed to load QML file")
         sys.exit(-1)
 
     loop = QEventLoop(app)
@@ -115,6 +167,9 @@ def main():
     except KeyboardInterrupt:
         logger.info("Application interrupted by user.")
     finally:
+        #print out logger tree
+        logger.info("Logger tree:")
+        logger.info(logger.manager.loggerDict)
         loop.close()
 
 if __name__ == "__main__":
