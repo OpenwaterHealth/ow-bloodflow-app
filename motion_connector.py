@@ -149,6 +149,10 @@ class MOTIONConnector(QObject):
         self._runlog_handler = None         # logging.FileHandler or None
         self._runlog_path = None            # str or None
         self._runlog_active = False         # bool
+        self._runlog_csv_path = None        # str or None
+        self._runlog_csv_file = None        # open file handle or None
+        self._runlog_csv_writer = None      # csv.writer or None
+        self._runlog_csv_lock = threading.Lock()
 
         default_dir = os.path.join(os.getcwd(), "scan_data")
         os.makedirs(default_dir, exist_ok=True)
@@ -206,6 +210,7 @@ class MOTIONConnector(QObject):
         # Timestamped filename for this specific trigger session
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self._runlog_path = os.path.join(run_dir, f"run-{ts}.log")
+        self._runlog_csv_path = os.path.join(run_dir, f"run-{ts}.csv")
 
         # Create handler with immediate flushing (delay=False ensures file is opened immediately)
         run_handler = logging.FileHandler(self._runlog_path,
@@ -229,6 +234,17 @@ class MOTIONConnector(QObject):
         # Save so we can remove/close it later
         self._runlog_handler = run_handler
         self._runlog_active = True
+
+        # Initialize CSV telemetry log (same basename as run log)
+        try:
+            self._runlog_csv_file = open(self._runlog_csv_path, "w", newline="", encoding="utf-8")
+            self._runlog_csv_writer = csv.writer(self._runlog_csv_file)
+            self._runlog_csv_writer.writerow(["timestamp", "unix_ms", "tcm", "tcl", "pdc"])
+            self._runlog_csv_file.flush()
+        except Exception as e:
+            logger.error(f"Failed to open run CSV log: {e}")
+            self._runlog_csv_file = None
+            self._runlog_csv_writer = None
 
         # --- Gather version info for header ---
         # SDK version (MOTION SDK / sensor SDK)
@@ -316,6 +332,35 @@ class MOTIONConnector(QObject):
         self._runlog_handler = None
         self._runlog_path = None
         self._runlog_active = False
+
+        # Close CSV telemetry log
+        with self._runlog_csv_lock:
+            if self._runlog_csv_file is not None:
+                try:
+                    self._runlog_csv_file.flush()
+                except Exception as e:
+                    logger.error(f"Error flushing run CSV log: {e}")
+                try:
+                    self._runlog_csv_file.close()
+                except Exception as e:
+                    logger.error(f"Error closing run CSV log: {e}")
+            self._runlog_csv_file = None
+            self._runlog_csv_writer = None
+            self._runlog_csv_path = None
+
+    def _write_runlog_csv_sample(self, tcm: int, tcl: int, pdc: float, timestamp: float):
+        if not self._runlog_active or self._runlog_csv_writer is None:
+            return
+        iso_ts = datetime.datetime.fromtimestamp(timestamp).isoformat(timespec="milliseconds")
+        unix_ms = int(timestamp * 1000)
+        with self._runlog_csv_lock:
+            if self._runlog_csv_writer is None:
+                return
+            try:
+                self._runlog_csv_writer.writerow([iso_ts, unix_ms, tcm, tcl, f"{pdc:.3f}"])
+                self._runlog_csv_file.flush()
+            except Exception as e:
+                logger.error(f"Failed to write run CSV sample: {e}")
 
     def log_system_information(self,logger):
         """Log system information including hostname, OS details, and hardware information."""
@@ -2067,6 +2112,7 @@ class ConsoleStatusThread(QThread):
                         tcm = int(tcm_raw)
                         tcl = int.from_bytes(tcl_raw, byteorder='little')
                         pdc = int.from_bytes(pdc_raw, byteorder='little') * 1.9  # mA
+                        ts = time.time()
 
                         if (
                             tcl != self.connector._tcl or
@@ -2080,6 +2126,7 @@ class ConsoleStatusThread(QThread):
                         run_logger.info(
                             f"Analog Values - TCM: {tcm}, TCL: {tcl}, PDC: {pdc:.3f}"
                         )
+                        self.connector._write_runlog_csv_sample(tcm, tcl, pdc, ts)
                     else:
                         logger.error("Failed to read analog telemetry values")
 
