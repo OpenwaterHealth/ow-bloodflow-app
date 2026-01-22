@@ -133,6 +133,7 @@ class MOTIONConnector(QObject):
         self._tcm = 0.0
         self._tcl = 0.0
         self._pdc = 0.0
+        self._telemetry_lock = threading.Lock()
 
         self._tec_voltage   = 0.0
         self._tec_temp      = 0.0
@@ -1873,7 +1874,7 @@ class MOTIONConnector(QObject):
                 csv_writer = csv.writer(f)
                 # Write CSV header
                 csv_writer.writerow(
-                    ["cam_id", "frame_id", "timestamp_s", *range(1024), "temperature", "sum"]
+                    ["cam_id", "frame_id", "timestamp_s", *range(1024), "temperature", "sum", "tcm", "tcl", "pdc"]
                 )
                 
                 # Buffer to accumulate incoming data
@@ -1881,7 +1882,13 @@ class MOTIONConnector(QObject):
                 
                 # Parse and write data using the helper function
                 proc = DataProcessor()
-                rows_written = proc.parse_stream_to_csv(q, stop_evt, csv_writer, buffer_accumulator)
+                def _extra_cols():
+                    with self._telemetry_lock:
+                        return [int(self._tcm), int(self._tcl), f"{float(self._pdc):.3f}"]
+
+                rows_written = proc.parse_stream_to_csv(
+                    q, stop_evt, csv_writer, buffer_accumulator, extra_cols_fn=_extra_cols
+                )
                 
                 logger.info(f"Wrote {rows_written} rows to {filename}")
                 
@@ -2114,14 +2121,15 @@ class ConsoleStatusThread(QThread):
                         pdc = int.from_bytes(pdc_raw, byteorder='little') * 1.9  # mA
                         ts = time.time()
 
-                        if (
-                            tcl != self.connector._tcl or
-                            tcm != self.connector._tcm or
-                            pdc != self.connector._pdc
-                        ):
-                            self.connector._tcl = tcl
-                            self.connector._tcm = tcm
-                            self.connector._pdc = pdc
+                        with self.connector._telemetry_lock:
+                            if (
+                                tcl != self.connector._tcl or
+                                tcm != self.connector._tcm or
+                                pdc != self.connector._pdc
+                            ):
+                                self.connector._tcl = tcl
+                                self.connector._tcm = tcm
+                                self.connector._pdc = pdc
 
                         run_logger.info(
                             f"Analog Values - TCM: {tcm}, TCL: {tcl}, PDC: {pdc:.3f}"
