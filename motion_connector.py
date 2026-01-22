@@ -269,7 +269,7 @@ class MOTIONConnector(QObject):
         self.log_system_information(logger)
         self.log_device_information()
         self.log_laser_information()
-        self._read_and_log_camera_uids()
+        # self._read_and_log_camera_uids()
         
         # Flush the handler to ensure header is written immediately
         try:
