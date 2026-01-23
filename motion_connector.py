@@ -194,7 +194,7 @@ class MOTIONConnector(QObject):
             self._data_RT = None
             logger.error(f"Failed to load RT model: {e}")
 
-    def _start_runlog(self):
+    def _start_runlog(self, subject_id: str = None):
         """
         Create a dedicated run log file and attach it to the global logger
         so that all logger.info / logger.error etc. also go into this file
@@ -210,8 +210,10 @@ class MOTIONConnector(QObject):
 
         # Timestamped filename for this specific trigger session
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self._runlog_path = os.path.join(run_dir, f"run-{ts}.log")
-        self._runlog_csv_path = os.path.join(run_dir, f"run-{ts}.csv")
+        base_subject = subject_id or self._subject_id or "unknown"
+        safe_subject = re.sub(r"[^A-Za-z0-9_-]", "", base_subject)
+        self._runlog_path = os.path.join(run_dir, f"run-{safe_subject}_{ts}.log")
+        self._runlog_csv_path = os.path.join(run_dir, f"run-{safe_subject}_{ts}.csv")
 
         # Create handler with immediate flushing (delay=False ensures file is opened immediately)
         run_handler = logging.FileHandler(self._runlog_path,
@@ -855,7 +857,7 @@ class MOTIONConnector(QObject):
 
             try:
                 # Start the per-run log now before any other logging
-                self._start_runlog()
+                self._start_runlog(subject_id=subject_id)
                 
                 ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 logger.info("Preparing capture…")
