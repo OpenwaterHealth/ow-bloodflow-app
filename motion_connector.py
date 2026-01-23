@@ -18,6 +18,7 @@ import socket
 
 from motion_singleton import motion_interface  
 from processing.data_processing import DataProcessor 
+from processing.visualize_bloodflow import VisualizeBloodflow
 from utils.resource_path import resource_path
 import struct
 import numpy as np
@@ -34,6 +35,7 @@ TEC_VOLTAGE_DEFAULT = 1.1  # volts
 
 # Global loggers - will be configured by _configure_logging method
 logger = logging.getLogger("bloodflow-app.connector")
+app_logger = logging.getLogger("openmotion.bloodflow-app")
 run_logger = logging.getLogger("bloodflow-app.runlog")
 
 # Define system states
@@ -999,6 +1001,11 @@ class MOTIONConnector(QObject):
                         logger.info(f"Saved scan notes to {notes_path}")
                     except Exception as e:
                         logger.error(f"Failed to save scan notes: {e}")
+                    # Post-scan quick stats
+                    try:
+                        self._log_scan_image_stats(left_path, right_path)
+                    except Exception as e:
+                        logger.error(f"Failed to compute scan image stats: {e}")
                 else:
                     err = "Capture canceled"
 
@@ -1018,6 +1025,62 @@ class MOTIONConnector(QObject):
         self._capture_thread = threading.Thread(target=_worker, daemon=True)
         self._capture_thread.start()
         return True
+
+    def _log_scan_image_stats(self, left_csv: str, right_csv: str) -> None:
+        left_csv = (left_csv or "").strip()
+        right_csv = (right_csv or "").strip()
+        if left_csv.lower().endswith(".raw"):
+            left_csv = left_csv[:-4] + ".csv"
+        if right_csv.lower().endswith(".raw"):
+            right_csv = right_csv[:-4] + ".csv"
+
+        if left_csv and not Path(left_csv).exists():
+            logger.warning(f"Scan stats skipped; left CSV not found: {left_csv}")
+            left_csv = ""
+        if right_csv and not Path(right_csv).exists():
+            logger.warning(f"Scan stats skipped; right CSV not found: {right_csv}")
+            right_csv = ""
+
+        if not left_csv and not right_csv:
+            logger.warning("Scan stats skipped; no CSV files available.")
+            return
+
+        viz = VisualizeBloodflow(left_csv, right_csv)
+        viz.compute()
+        _, _, camera_inds, _, mean = viz.get_results()
+        if mean is None or mean.size == 0:
+            logger.warning("Scan stats skipped; mean array was empty.")
+            return
+
+        per_cam_mean = np.mean(mean, axis=1)
+        per_cam_std = np.std(mean, axis=1)
+        sides = getattr(viz, "_sides", None)
+
+        logger.info("Scan image stats per camera:")
+        app_logger.info("Scan image stats per camera:")
+        run_logger.info("Scan image stats per camera:")
+
+        for idx in range(len(per_cam_mean)):
+            cam_id = None
+            if camera_inds is not None and idx < len(camera_inds):
+                try:
+                    cam_id = int(camera_inds[idx])
+                except Exception:
+                    cam_id = None
+            side = None
+            if sides is not None and idx < len(sides):
+                side = str(sides[idx])
+
+            if cam_id is None:
+                label = f"camera[{idx}]"
+            elif side:
+                label = f"camera {cam_id} ({side})"
+            else:
+                label = f"camera {cam_id}"
+
+            logger.info("  %s mean: %.6f, std dev: %.6f", label, float(per_cam_mean[idx]), float(per_cam_std[idx]))
+            app_logger.info("  %s mean: %.6f, std dev: %.6f", label, float(per_cam_mean[idx]), float(per_cam_std[idx]))
+            run_logger.info("  %s mean: %.6f, std dev: %.6f", label, float(per_cam_mean[idx]), float(per_cam_std[idx]))
 
     @pyqtSlot()
     def stopCapture(self):
