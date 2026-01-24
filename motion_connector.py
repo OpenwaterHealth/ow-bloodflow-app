@@ -34,8 +34,7 @@ R_3 = 51100 #(R225)
 TEC_VOLTAGE_DEFAULT = 1.1  # volts
 
 # Global loggers - will be configured by _configure_logging method
-logger = logging.getLogger("bloodflow-app.connector")
-app_logger = logging.getLogger("openmotion.bloodflow-app")
+logger = logging.getLogger("openmotion.bloodflow-app.connector")
 run_logger = logging.getLogger("bloodflow-app.runlog")
 
 # Define system states
@@ -1047,17 +1046,16 @@ class MOTIONConnector(QObject):
 
         viz = VisualizeBloodflow(left_csv, right_csv)
         viz.compute()
-        _, _, camera_inds, _, mean = viz.get_results()
+        _, _, camera_inds, contrast, mean = viz.get_results()
         if mean is None or mean.size == 0:
             logger.warning("Scan stats skipped; mean array was empty.")
             return
 
         per_cam_mean = np.mean(mean, axis=1)
-        per_cam_std = np.std(mean, axis=1)
+        per_cam_contrast = np.mean(contrast, axis=1) if contrast is not None else None
         sides = getattr(viz, "_sides", None)
 
         logger.info("Scan image stats per camera:")
-        app_logger.info("Scan image stats per camera:")
         run_logger.info("Scan image stats per camera:")
 
         for idx in range(len(per_cam_mean)):
@@ -1078,9 +1076,22 @@ class MOTIONConnector(QObject):
             else:
                 label = f"camera {cam_id}"
 
-            logger.info("  %s mean: %.6f, std dev: %.6f", label, float(per_cam_mean[idx]), float(per_cam_std[idx]))
-            app_logger.info("  %s mean: %.6f, std dev: %.6f", label, float(per_cam_mean[idx]), float(per_cam_std[idx]))
-            run_logger.info("  %s mean: %.6f, std dev: %.6f", label, float(per_cam_mean[idx]), float(per_cam_std[idx]))
+            if per_cam_contrast is None:
+                logger.info("  %s mean: %.0f", label, float(per_cam_mean[idx]))
+                run_logger.info("  %s mean: %.0f", label, float(per_cam_mean[idx]))
+            else:
+                logger.info(
+                    "  %s mean: %.0f, avg contrast: %.3f",
+                    label,
+                    float(per_cam_mean[idx]),
+                    float(per_cam_contrast[idx]),
+                )
+                run_logger.info(
+                    "  %s mean: %.0f, avg contrast: %.3f",
+                    label,
+                    float(per_cam_mean[idx]),
+                    float(per_cam_contrast[idx]),
+                )
 
     @pyqtSlot()
     def stopCapture(self):
