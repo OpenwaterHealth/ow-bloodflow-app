@@ -18,6 +18,7 @@ import socket
 
 from motion_singleton import motion_interface  
 from processing.data_processing import DataProcessor 
+from processing.visualize_bloodflow import VisualizeBloodflow
 from utils.resource_path import resource_path
 import struct
 import numpy as np
@@ -33,7 +34,7 @@ R_3 = 51100 #(R225)
 TEC_VOLTAGE_DEFAULT = 1.1  # volts
 
 # Global loggers - will be configured by _configure_logging method
-logger = logging.getLogger("bloodflow-app.connector")
+logger = logging.getLogger("openmotion.bloodflow-app.connector")
 run_logger = logging.getLogger("bloodflow-app.runlog")
 
 # Define system states
@@ -194,7 +195,7 @@ class MOTIONConnector(QObject):
             self._data_RT = None
             logger.error(f"Failed to load RT model: {e}")
 
-    def _start_runlog(self):
+    def _start_runlog(self, subject_id: str = None):
         """
         Create a dedicated run log file and attach it to the global logger
         so that all logger.info / logger.error etc. also go into this file
@@ -210,8 +211,10 @@ class MOTIONConnector(QObject):
 
         # Timestamped filename for this specific trigger session
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self._runlog_path = os.path.join(run_dir, f"run-{ts}.log")
-        self._runlog_csv_path = os.path.join(run_dir, f"run-{ts}.csv")
+        base_subject = subject_id or self._subject_id or "unknown"
+        safe_subject = re.sub(r"[^A-Za-z0-9_-]", "", base_subject)
+        self._runlog_path = os.path.join(run_dir, f"run-{safe_subject}_{ts}.log")
+        self._runlog_csv_path = os.path.join(run_dir, f"run-{safe_subject}_{ts}.csv")
 
         # Create handler with immediate flushing (delay=False ensures file is opened immediately)
         run_handler = logging.FileHandler(self._runlog_path,
@@ -855,7 +858,7 @@ class MOTIONConnector(QObject):
 
             try:
                 # Start the per-run log now before any other logging
-                self._start_runlog()
+                self._start_runlog(subject_id=subject_id)
                 
                 ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 logger.info("Preparing capture…")
@@ -997,6 +1000,11 @@ class MOTIONConnector(QObject):
                         logger.info(f"Saved scan notes to {notes_path}")
                     except Exception as e:
                         logger.error(f"Failed to save scan notes: {e}")
+                    # Post-scan quick stats
+                    try:
+                        self._log_scan_image_stats(left_path, right_path)
+                    except Exception as e:
+                        logger.error(f"Failed to compute scan image stats: {e}")
                 else:
                     err = "Capture canceled"
 
@@ -1016,6 +1024,74 @@ class MOTIONConnector(QObject):
         self._capture_thread = threading.Thread(target=_worker, daemon=True)
         self._capture_thread.start()
         return True
+
+    def _log_scan_image_stats(self, left_csv: str, right_csv: str) -> None:
+        left_csv = (left_csv or "").strip()
+        right_csv = (right_csv or "").strip()
+        if left_csv.lower().endswith(".raw"):
+            left_csv = left_csv[:-4] + ".csv"
+        if right_csv.lower().endswith(".raw"):
+            right_csv = right_csv[:-4] + ".csv"
+
+        if left_csv and not Path(left_csv).exists():
+            logger.warning(f"Scan stats skipped; left CSV not found: {left_csv}")
+            left_csv = ""
+        if right_csv and not Path(right_csv).exists():
+            logger.warning(f"Scan stats skipped; right CSV not found: {right_csv}")
+            right_csv = ""
+
+        if not left_csv and not right_csv:
+            logger.warning("Scan stats skipped; no CSV files available.")
+            return
+
+        viz = VisualizeBloodflow(left_csv, right_csv)
+        viz.compute()
+        _, _, camera_inds, contrast, mean = viz.get_results()
+        if mean is None or mean.size == 0:
+            logger.warning("Scan stats skipped; mean array was empty.")
+            return
+
+        per_cam_mean = np.mean(mean, axis=1)
+        per_cam_contrast = np.mean(contrast, axis=1) if contrast is not None else None
+        sides = getattr(viz, "_sides", None)
+
+        logger.info("Scan image stats per camera:")
+        run_logger.info("Scan image stats per camera:")
+
+        for idx in range(len(per_cam_mean)):
+            cam_id = None
+            if camera_inds is not None and idx < len(camera_inds):
+                try:
+                    cam_id = int(camera_inds[idx])
+                except Exception:
+                    cam_id = None
+            side = None
+            if sides is not None and idx < len(sides):
+                side = str(sides[idx])
+
+            if cam_id is None:
+                label = f"camera[{idx}]"
+            elif side:
+                label = f"camera {cam_id} ({side})"
+            else:
+                label = f"camera {cam_id}"
+
+            if per_cam_contrast is None:
+                logger.info("  %s mean: %.0f", label, float(per_cam_mean[idx]))
+                run_logger.info("  %s mean: %.0f", label, float(per_cam_mean[idx]))
+            else:
+                logger.info(
+                    "  %s mean: %.0f, avg contrast: %.3f",
+                    label,
+                    float(per_cam_mean[idx]),
+                    float(per_cam_contrast[idx]),
+                )
+                run_logger.info(
+                    "  %s mean: %.0f, avg contrast: %.3f",
+                    label,
+                    float(per_cam_mean[idx]),
+                    float(per_cam_contrast[idx]),
+                )
 
     @pyqtSlot()
     def stopCapture(self):
