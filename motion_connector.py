@@ -17,6 +17,7 @@ import platform
 import socket
 
 from motion_singleton import motion_interface  
+from omotion.config import DEBUG_FLAG_USB_PRINTF
 from processing.data_processing import DataProcessor 
 from processing.visualize_bloodflow import VisualizeBloodflow
 from utils.resource_path import resource_path
@@ -164,6 +165,14 @@ class MOTIONConnector(QObject):
         self._subject_id = self.generate_subject_id()
         logger.info(f"[Connector] Generated subject ID: {self._subject_id}")
 
+        # Emit synthetic connect events for devices already connected at startup
+        if self._leftSensorConnected:
+            self.on_connected("SENSOR_LEFT", "startup")
+        if self._rightSensorConnected:
+            self.on_connected("SENSOR_RIGHT", "startup")
+        if self._consoleConnected:
+            self.on_connected("CONSOLE", "startup")
+
         # Start console status thread if console is already connected at startup
         if self._consoleConnected and self._console_status_thread is None:
             logger.info("[Connector] Console already connected at startup, starting status thread")
@@ -194,6 +203,27 @@ class MOTIONConnector(QObject):
         except Exception as e:
             self._data_RT = None
             logger.error(f"Failed to load RT model: {e}")
+
+    def _enable_sensor_debug_logging(self, side: str):
+        sensor = motion_interface.sensors.get(side)
+        if sensor is None:
+            logger.warning(f"Sensor debug logging skipped: {side} sensor not available")
+            return
+
+        idx = 0 if side == "left" else 1
+        self._sensor_mutex[idx].lock()
+        try:
+            if not sensor.is_connected():
+                logger.warning(f"Sensor debug logging skipped: {side} sensor not connected")
+                return
+
+            logger.info(f"Requesting sensor debug logging enable for {side} sensor")
+            if sensor.set_debug_flags(DEBUG_FLAG_USB_PRINTF):
+                logger.info(f"Enabled sensor debug logging for {side} sensor")
+            else:
+                logger.warning(f"Failed to enable sensor debug logging for {side} sensor")
+        finally:
+            self._sensor_mutex[idx].unlock()
 
     def _start_runlog(self, subject_id: str = None):
         """
@@ -565,8 +595,10 @@ class MOTIONConnector(QObject):
         logger.info(f"Device connected: {descriptor} on port {port}")
         if descriptor.upper() == "SENSOR_LEFT":
             self._leftSensorConnected = True
+            self._enable_sensor_debug_logging("left")
         if descriptor.upper() == "SENSOR_RIGHT":
             self._rightSensorConnected = True
+            self._enable_sensor_debug_logging("right")
         elif descriptor.upper() == "CONSOLE":
             self._consoleConnected = True
             self._console_mutex.lock()
