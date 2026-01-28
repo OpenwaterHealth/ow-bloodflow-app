@@ -18,7 +18,7 @@ import socket
 
 from motion_singleton import motion_interface  
 from omotion.config import DEBUG_FLAG_USB_PRINTF
-from processing.data_processing import DataProcessor 
+from processing.data_processing import DataProcessor, HISTO_BINS
 from processing.visualize_bloodflow import VisualizeBloodflow
 from utils.resource_path import resource_path
 import struct
@@ -77,6 +77,7 @@ class MOTIONConnector(QObject):
     captureLog = pyqtSignal(str)                            # log lines
     captureFinished = pyqtSignal(bool, str, str, str)       # ok, error, leftPath, rightPath
     scanNotesChanged = pyqtSignal()
+    scanMeanSampled = pyqtSignal(str, int, float, float)  # side, cam_id, timestamp_s, mean
 
     # post-processing signals
     postProgress = pyqtSignal(int)
@@ -941,7 +942,7 @@ class MOTIONConnector(QObject):
                     filepath = os.path.join(data_dir, filename)
                     t = threading.Thread(
                         target=self._write_stream_to_file,
-                        args=(q, stop_evt, filepath),
+                        args=(q, stop_evt, filepath, side),
                         daemon=True,
                     )
                     t.start()
@@ -1971,7 +1972,7 @@ class MOTIONConnector(QObject):
         logger.info(f"Data received from {descriptor}: {message}")
         self.signalDataReceived.emit(descriptor, message)
     
-    def _write_stream_to_file(self, q: queue.Queue, stop_evt: threading.Event, filename: str):
+    def _write_stream_to_file(self, q: queue.Queue, stop_evt: threading.Event, filename: str, side: str):
         """
         Parse streaming binary data and write to CSV file.
         Uses the parser from parse_data_v2.py to convert binary packets to CSV rows.
@@ -1993,9 +1994,20 @@ class MOTIONConnector(QObject):
                 def _extra_cols():
                     with self._telemetry_lock:
                         return [int(self._tcm), int(self._tcl), f"{float(self._pdc):.3f}"]
+                def _on_row(cam_id, frame_id, ts_val, hist, row_sum):
+                    try:
+                        if row_sum > 0:
+                            mean_val = float(np.dot(hist, HISTO_BINS) / row_sum)
+                        else:
+                            mean_val = 0.0
+                        timestamp = float(ts_val) if ts_val else time.time()
+                        self.scanMeanSampled.emit(side, int(cam_id), float(timestamp), mean_val)
+                    except Exception:
+                        # Don't let plotting errors break the writer thread
+                        return
 
                 rows_written = proc.parse_stream_to_csv(
-                    q, stop_evt, csv_writer, buffer_accumulator, extra_cols_fn=_extra_cols
+                    q, stop_evt, csv_writer, buffer_accumulator, extra_cols_fn=_extra_cols, on_row_fn=_on_row
                 )
                 
                 logger.info(f"Wrote {rows_written} rows to {filename}")

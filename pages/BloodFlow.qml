@@ -596,6 +596,7 @@ Rectangle {
                                 scanDialog.stageText = "Preparing…";
                                 scanDialog.progress = 1;
                                 scanDialog.open();
+                                meanPlotWindow.startScan(bloodFlow.leftMask, bloodFlow.rightMask);
                                 scanRunner.start();
                             }
                         }
@@ -723,6 +724,7 @@ Rectangle {
             if (err === "Canceled") {
                 // Cancel should CLOSE the dialog
                 scanDialog.close()
+                meanPlotWindow.stopScan()
                 return
             }
 
@@ -731,6 +733,7 @@ Rectangle {
                 scanDialog.stageText = "Error during capture";
                 // keep it open so you can read the error
                 scanDialog.done = true
+                meanPlotWindow.stopScan()
                 return;
             }
 
@@ -738,7 +741,12 @@ Rectangle {
             scanDialog.stageText = "Capture complete"
             scanDialog.progress = 100
             scanDialog.done = true
+            meanPlotWindow.stopScan()
             // scanDialog.close();
         }
+    }
+
+    RealtimeMeanPlotWindow {
+        id: meanPlotWindow
     }
 }

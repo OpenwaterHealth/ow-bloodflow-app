@@ -23,6 +23,7 @@ except ImportError:
 # ─── Constants ──────────────────────────────────────────────
 HISTO_SIZE_WORDS = 1024
 HISTO_BYTES = HISTO_SIZE_WORDS * 4
+HISTO_BINS = np.arange(HISTO_SIZE_WORDS, dtype=np.float64)
 PACKET_HEADER_SIZE = 6
 PACKET_FOOTER_SIZE = 3
 HISTO_BLOCK_SIZE = 1 + 1 + HISTO_BYTES + 4 + 1
@@ -187,7 +188,7 @@ class DataProcessor:
         total_packets = packet_ok + packet_fail + crc_failure + other_fail + bad_header_fail
         print(f"Parsed {total_packets} packets, {packet_ok} OK")
 
-    def parse_stream_to_csv(self, q: queue.Queue, stop_evt: threading.Event, csv_writer, buffer_accumulator: bytearray, extra_cols_fn=None):
+    def parse_stream_to_csv(self, q: queue.Queue, stop_evt: threading.Event, csv_writer, buffer_accumulator: bytearray, extra_cols_fn=None, on_row_fn=None):
         """
         Parse streaming binary data and write to CSV.
         This function is called to process data from the queue.
@@ -220,6 +221,8 @@ class DataProcessor:
                         row = [cam_id, ids[cam_id], ts_val, *hist.tolist(), temps[cam_id], row_sum, *extra_cols]
                         csv_writer.writerow(row)
                         rows_written += 1
+                        if on_row_fn:
+                            on_row_fn(cam_id, ids[cam_id], ts_val, hist, row_sum)
                         
                 except ValueError as e:
                     # Try to resync on error
