@@ -18,3 +18,9 @@ powershell -ExecutionPolicy Bypass -File build_and_zip.ps1 -OpenFolder
 # from repo root
 Remove-Item -Recurse -Force build, dist
 python -m PyInstaller -y openwater.spec
+
+## Antivirus Note
+Some antiviruses may block the software from running such as Microsoft Defender or Smart App Control on Windows 11. Future production versions of the software will not have this issue but during development or for custom builds this may not be avoidable. 
+
+[Here is a guide that will help you turn Smart App Control on Win11 off.](https://www.ninjaone.com/blog/how-to-turn-off-smart-app-control-in-windows-11/)
+
