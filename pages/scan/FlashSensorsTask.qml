@@ -45,5 +45,6 @@ QtObject {
 
         // start async; returns immediately so UI can render dialog
         connector.startConfigureCameraSensors(leftCameraMask, rightCameraMask)
+        log("done1")
     }
 }

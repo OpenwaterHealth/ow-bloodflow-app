@@ -11,6 +11,7 @@ import os
 import datetime
 import time
 import random
+import math
 import re
 import string
 import platform
@@ -33,6 +34,11 @@ R_1 = 18000 #(R221)
 R_2 = 8160  #(R224)
 R_3 = 51100 #(R225)
 TEC_VOLTAGE_DEFAULT = 1.1  # volts
+
+HISTO_BINS_SQ = HISTO_BINS * HISTO_BINS
+_BFI_CAL = VisualizeBloodflow(left_csv="", right_csv="")
+_BFI_C_MIN = _BFI_CAL.C_min
+_BFI_C_MAX = _BFI_CAL.C_max
 
 # Global loggers - will be configured by _configure_logging method
 logger = logging.getLogger("openmotion.bloodflow-app.connector")
@@ -78,6 +84,7 @@ class MOTIONConnector(QObject):
     captureFinished = pyqtSignal(bool, str, str, str)       # ok, error, leftPath, rightPath
     scanNotesChanged = pyqtSignal()
     scanMeanSampled = pyqtSignal(str, int, float, float)  # side, cam_id, timestamp_s, mean
+    scanBfiSampled = pyqtSignal(str, int, float, float)   # side, cam_id, timestamp_s, bfi
 
     # post-processing signals
     postProgress = pyqtSignal(int)
@@ -2000,8 +2007,26 @@ class MOTIONConnector(QObject):
                             mean_val = float(np.dot(hist, HISTO_BINS) / row_sum)
                         else:
                             mean_val = 0.0
+                        if row_sum > 0 and mean_val > 0:
+                            mean2 = float(np.dot(hist, HISTO_BINS_SQ) / row_sum)
+                            var = max(0.0, mean2 - (mean_val * mean_val))
+                            std = math.sqrt(var)
+                            contrast = std / mean_val if mean_val > 0 else 0.0
+                        else:
+                            contrast = 0.0
+
+                        module_idx = 0 if side == "left" else 1
+                        cam_pos = int(cam_id) % 8
+                        if module_idx >= _BFI_C_MIN.shape[0] or cam_pos >= _BFI_C_MIN.shape[1]:
+                            bfi_val = contrast * 10.0
+                        else:
+                            cmin = float(_BFI_C_MIN[module_idx, cam_pos])
+                            cmax = float(_BFI_C_MAX[module_idx, cam_pos])
+                            cden = (cmax - cmin) or 1.0
+                            bfi_val = (1.0 - ((contrast - cmin) / cden)) * 10.0
                         timestamp = float(ts_val) if ts_val else time.time()
                         self.scanMeanSampled.emit(side, int(cam_id), float(timestamp), mean_val)
+                        self.scanBfiSampled.emit(side, int(cam_id), float(timestamp), float(bfi_val))
                     except Exception:
                         # Don't let plotting errors break the writer thread
                         return

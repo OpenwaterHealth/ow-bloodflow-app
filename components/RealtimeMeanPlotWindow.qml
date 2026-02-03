@@ -12,12 +12,17 @@ Window {
     title: "Realtime Image Mean"
     color: "#1E1E20"
 
-    property int windowSeconds: 30
+    property int windowSeconds: 15
     property bool running: false
     property var seriesData: ({})
     property var seriesOrder: []
     property var seriesColors: ({})
     property real latestTimestamp: 0
+    property string plotMetric: "mean" // "mean" or "bfi"
+
+    onPlotMetricChanged: {
+        reset()
+    }
 
     property var _palette: [
         "#4A90E2", "#E67E22", "#2ECC71", "#9B59B6",
@@ -123,12 +128,31 @@ Window {
             spacing: 10
 
             Text {
-                text: "Image Mean (Last " + windowSeconds + "s)"
+                text: (plotMetric === "bfi" ? "BFI" : "Image Mean") + " (Last " + windowSeconds + "s)"
                 color: "#FFFFFF"
                 font.pixelSize: 16
             }
 
             Item { Layout.fillWidth: true }
+
+            RowLayout {
+                spacing: 6
+                Text {
+                    text: "Mean"
+                    color: "#BDC3C7"
+                    font.pixelSize: 12
+                }
+                Switch {
+                    id: metricSwitch
+                    checked: plotMetric === "bfi"
+                    onToggled: plotMetric = checked ? "bfi" : "mean"
+                }
+                Text {
+                    text: "BFI"
+                    color: "#BDC3C7"
+                    font.pixelSize: 12
+                }
+            }
 
             Repeater {
                 model: seriesOrder
@@ -174,15 +198,26 @@ Window {
                     const xMin = nowTs - meanWindow.windowSeconds
                     const xMax = nowTs
 
-                    let maxVal = 1
+                    let maxVal = -Infinity
+                    let minVal = Infinity
                     for (let i = 0; i < meanWindow.seriesOrder.length; i++) {
                         const key = meanWindow.seriesOrder[i]
                         const series = meanWindow.seriesData[key] || []
                         for (let j = 0; j < series.length; j++) {
                             if (series[j].v > maxVal)
                                 maxVal = series[j].v
+                            if (series[j].v < minVal)
+                                minVal = series[j].v
                         }
                     }
+                    if (!isFinite(minVal) || !isFinite(maxVal)) {
+                        minVal = 0
+                        maxVal = 1
+                    } else if (minVal === maxVal) {
+                        minVal = minVal - 1
+                        maxVal = maxVal + 1
+                    }
+                    const yRange = maxVal - minVal
 
                     // Axes
                     ctx.strokeStyle = "#BDC3C7"
@@ -206,7 +241,7 @@ Window {
                     ctx.translate(12, pad + h / 2)
                     ctx.rotate(-Math.PI / 2)
                     ctx.textAlign = "center"
-                    ctx.fillText("Mean", 0, 0)
+                    ctx.fillText(meanWindow.plotMetric === "bfi" ? "BFI" : "Mean", 0, 0)
                     ctx.restore()
 
                     // Series lines
@@ -221,7 +256,7 @@ Window {
                         for (let j = 0; j < series.length; j++) {
                             const pt = series[j]
                             const x = pad + ((pt.t - xMin) / (xMax - xMin)) * w
-                            const y = pad + h - (pt.v / maxVal) * h
+                            const y = pad + h - ((pt.v - minVal) / yRange) * h
                             if (j === 0)
                                 ctx.moveTo(x, y)
                             else
@@ -243,7 +278,14 @@ Window {
     Connections {
         target: MOTIONInterface
         function onScanMeanSampled(side, camId, timestampSec, meanVal) {
-            meanWindow.handleSample(side, camId, timestampSec, meanVal)
+            if (meanWindow.plotMetric === "mean") {
+                meanWindow.handleSample(side, camId, timestampSec, meanVal)
+            }
+        }
+        function onScanBfiSampled(side, camId, timestampSec, bfiVal) {
+            if (meanWindow.plotMetric === "bfi") {
+                meanWindow.handleSample(side, camId, timestampSec, bfiVal)
+            }
         }
     }
 }
