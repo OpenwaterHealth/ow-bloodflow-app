@@ -162,6 +162,24 @@ Window {
         return isFinite(val) ? val.toFixed(2) : "--"
     }
 
+    function _seriesBounds(series) {
+        let maxVal = -Infinity
+        let minVal = Infinity
+        for (let j = 0; j < series.length; j++) {
+            const v = series[j].v
+            if (v > maxVal) maxVal = v
+            if (v < minVal) minVal = v
+        }
+        if (!isFinite(minVal) || !isFinite(maxVal)) {
+            minVal = 0
+            maxVal = 1
+        } else if (minVal === maxVal) {
+            minVal = minVal - 1
+            maxVal = maxVal + 1
+        }
+        return { minVal, maxVal, range: maxVal - minVal }
+    }
+
     onClosing: {
         running = false
     }
@@ -260,26 +278,8 @@ Window {
                                 const bfiSeries = data.bfi || []
                                 const bviSeries = data.bvi || []
 
-                                let maxVal = -Infinity
-                                let minVal = Infinity
-                                for (let j = 0; j < bfiSeries.length; j++) {
-                                    const v = bfiSeries[j].v
-                                    if (v > maxVal) maxVal = v
-                                    if (v < minVal) minVal = v
-                                }
-                                for (let j = 0; j < bviSeries.length; j++) {
-                                    const v = bviSeries[j].v
-                                    if (v > maxVal) maxVal = v
-                                    if (v < minVal) minVal = v
-                                }
-                                if (!isFinite(minVal) || !isFinite(maxVal)) {
-                                    minVal = 0
-                                    maxVal = 1
-                                } else if (minVal === maxVal) {
-                                    minVal = minVal - 1
-                                    maxVal = maxVal + 1
-                                }
-                                const yRange = maxVal - minVal
+                                const bfiBounds = meanWindow._seriesBounds(bfiSeries)
+                                const bviBounds = meanWindow._seriesBounds(bviSeries)
 
                                 // Axes
                                 ctx.strokeStyle = "#BDC3C7"
@@ -306,7 +306,7 @@ Window {
                                 ctx.fillText("BFI/BVI", 0, 0)
                                 ctx.restore()
 
-                                function drawSeries(series, color) {
+                                function drawSeries(series, color, bounds) {
                                     if (series.length < 2)
                                         return
                                     ctx.strokeStyle = color
@@ -315,7 +315,7 @@ Window {
                                     for (let j = 0; j < series.length; j++) {
                                         const pt = series[j]
                                         const x = pad + ((pt.t - xMin) / (xMax - xMin)) * w
-                                        const y = pad + h - ((pt.v - minVal) / yRange) * h
+                                        const y = pad + h - ((pt.v - bounds.minVal) / bounds.range) * h
                                         if (j === 0)
                                             ctx.moveTo(x, y)
                                         else
@@ -324,8 +324,8 @@ Window {
                                     ctx.stroke()
                                 }
 
-                                drawSeries(bfiSeries, meanWindow.bfiColor)
-                                drawSeries(bviSeries, meanWindow.bviColor)
+                                drawSeries(bfiSeries, meanWindow.bfiColor, bfiBounds)
+                                drawSeries(bviSeries, meanWindow.bviColor, bviBounds)
 
                                 if (bfiSeries.length === 0 && bviSeries.length === 0) {
                                     ctx.fillStyle = "#7F8C8D"
