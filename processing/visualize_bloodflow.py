@@ -255,7 +255,7 @@ class VisualizeBloodflow:
                                 ha='center', va='center', 
                                 transform=ax[row, col].transAxes,
                                 fontsize=12, alpha=0.5)
-                ax[row, col].set_ylabel(f'Camera Position {row}')
+                ax[row, col].set_ylabel(f'Camera Position {row + 1}')
                 # Hide ticks for empty plots
                 ax[row, col].set_xticks([])
                 ax[row, col].set_yticks([])
@@ -311,7 +311,7 @@ class VisualizeBloodflow:
             lines = line1 + line2
             labels = [l.get_label() for l in lines]
             ax_mj.legend(lines, labels)
-            ax_mj.set_ylabel(f'Camera {cam_id}')
+            ax_mj.set_ylabel(f'Camera {cam_id + 1}')
 
         # Titles/labels based on what modules we have
         if has_left and has_right:

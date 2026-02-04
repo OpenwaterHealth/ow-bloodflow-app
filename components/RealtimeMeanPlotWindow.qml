@@ -20,7 +20,9 @@ Window {
     property color bfiColor: "#E74C3C"
     property color bviColor: "#3498DB"
     property int plotColumns: 4
-    property int plotRows: seriesOrder.length > 8 ? 4 : 2
+    property int leftActiveCount: 0
+    property int rightActiveCount: 0
+    property int plotRows: (leftActiveCount === 8 || rightActiveCount === 8) ? 4 : 2
 
     function _seriesKey(side, camId) {
         return side + ":" + camId
@@ -30,24 +32,56 @@ Window {
         const parts = key.split(":")
         if (parts.length !== 2) return key
         const side = parts[0]
-        const cam = parts[1]
-        return (side === "left" ? "L" : "R") + "-" + cam
+        const cam = parseInt(parts[1], 10)
+        const camLabel = isNaN(cam) ? parts[1] : (cam + 1)
+        return (side === "left" ? "L" : "R") + "-" + camLabel
     }
 
-    function _ensureSeries(key) {
+    function _ensureSeries(key, addToOrder) {
         if (seriesData[key] !== undefined)
             return
         seriesData[key] = ({ bfi: [], bvi: [], latestBfi: NaN, latestBvi: NaN })
-        // Reassign array so Repeater models update
-        seriesOrder = seriesOrder.concat([key])
+        if (addToOrder) {
+            // Reassign array so Repeater models update
+            seriesOrder = seriesOrder.concat([key])
+        }
     }
 
-    function _addMaskSeries(side, mask) {
+    function _activeCamsFromMask(mask) {
+        const cams = []
         for (let bit = 0; bit < 8; bit++) {
             if (mask & (1 << bit)) {
-                _ensureSeries(_seriesKey(side, bit))
+                cams.push(bit)
             }
         }
+        return cams
+    }
+
+    function _buildSeriesOrder(leftMask, rightMask) {
+        const leftCams = _activeCamsFromMask(leftMask)
+        const rightCams = _activeCamsFromMask(rightMask)
+        leftActiveCount = leftCams.length
+        rightActiveCount = rightCams.length
+
+        const rows = (leftCams.length === 8 || rightCams.length === 8) ? 4 : 2
+        const lastIdx = (rows * 2) - 1
+        const order = []
+
+        for (let row = 0; row < rows; row++) {
+            if (leftCams.length > 0) {
+                const a = leftCams[row]
+                const b = leftCams[lastIdx - row]
+                if (a !== undefined) order.push(_seriesKey("left", a))
+                if (b !== undefined) order.push(_seriesKey("left", b))
+            }
+            if (rightCams.length > 0) {
+                const a = rightCams[row]
+                const b = rightCams[lastIdx - row]
+                if (a !== undefined) order.push(_seriesKey("right", a))
+                if (b !== undefined) order.push(_seriesKey("right", b))
+            }
+        }
+        return order
     }
 
     function reset() {
@@ -59,8 +93,11 @@ Window {
     function startScan(leftMask, rightMask) {
         reset()
         running = true
-        _addMaskSeries("left", leftMask)
-        _addMaskSeries("right", rightMask)
+        const order = _buildSeriesOrder(leftMask, rightMask)
+        seriesOrder = order
+        for (let i = 0; i < order.length; i++) {
+            _ensureSeries(order[i], false)
+        }
         visible = true
         raise()
         requestActivate()
@@ -74,7 +111,7 @@ Window {
         if (!running)
             return
         const key = _seriesKey(side, camId)
-        _ensureSeries(key)
+        _ensureSeries(key, false)
         seriesData[key].bfi.push({ t: timestampSec, v: bfiVal })
         seriesData[key].latestBfi = bfiVal
         // Reassign to trigger bindings for latest values
@@ -88,7 +125,7 @@ Window {
         if (!running)
             return
         const key = _seriesKey(side, camId)
-        _ensureSeries(key)
+        _ensureSeries(key, false)
         seriesData[key].bvi.push({ t: timestampSec, v: bviVal })
         seriesData[key].latestBvi = bviVal
         // Reassign to trigger bindings for latest values
