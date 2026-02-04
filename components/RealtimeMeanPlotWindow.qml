@@ -9,27 +9,18 @@ Window {
     width: 900
     height: 520
     visible: false
-    title: "Realtime Image Mean"
+    title: "Realtime BFI/BVI"
     color: "#1E1E20"
 
     property int windowSeconds: 15
     property bool running: false
     property var seriesData: ({})
     property var seriesOrder: []
-    property var seriesColors: ({})
     property real latestTimestamp: 0
-    property string plotMetric: "mean" // "mean" or "bfi"
-
-    onPlotMetricChanged: {
-        reset()
-    }
-
-    property var _palette: [
-        "#4A90E2", "#E67E22", "#2ECC71", "#9B59B6",
-        "#E74C3C", "#1ABC9C", "#F1C40F", "#95A5A6",
-        "#3498DB", "#D35400", "#27AE60", "#8E44AD",
-        "#C0392B", "#16A085", "#F39C12", "#7F8C8D"
-    ]
+    property color bfiColor: "#E74C3C"
+    property color bviColor: "#3498DB"
+    property int plotColumns: 4
+    property int plotRows: seriesOrder.length > 8 ? 4 : 2
 
     function _seriesKey(side, camId) {
         return side + ":" + camId
@@ -46,10 +37,9 @@ Window {
     function _ensureSeries(key) {
         if (seriesData[key] !== undefined)
             return
-        seriesData[key] = []
-        seriesOrder.push(key)
-        const colorIndex = (seriesOrder.length - 1) % _palette.length
-        seriesColors[key] = _palette[colorIndex]
+        seriesData[key] = ({ bfi: [], bvi: [], latestBfi: NaN, latestBvi: NaN })
+        // Reassign array so Repeater models update
+        seriesOrder = seriesOrder.concat([key])
     }
 
     function _addMaskSeries(side, mask) {
@@ -63,7 +53,6 @@ Window {
     function reset() {
         seriesData = ({})
         seriesOrder = []
-        seriesColors = ({})
         latestTimestamp = 0
     }
 
@@ -81,12 +70,29 @@ Window {
         running = false
     }
 
-    function handleSample(side, camId, timestampSec, meanVal) {
+    function handleBfiSample(side, camId, timestampSec, bfiVal) {
         if (!running)
             return
         const key = _seriesKey(side, camId)
         _ensureSeries(key)
-        seriesData[key].push({ t: timestampSec, v: meanVal })
+        seriesData[key].bfi.push({ t: timestampSec, v: bfiVal })
+        seriesData[key].latestBfi = bfiVal
+        // Reassign to trigger bindings for latest values
+        seriesData = Object.assign({}, seriesData)
+        if (timestampSec > latestTimestamp) {
+            latestTimestamp = timestampSec
+        }
+    }
+
+    function handleBviSample(side, camId, timestampSec, bviVal) {
+        if (!running)
+            return
+        const key = _seriesKey(side, camId)
+        _ensureSeries(key)
+        seriesData[key].bvi.push({ t: timestampSec, v: bviVal })
+        seriesData[key].latestBvi = bviVal
+        // Reassign to trigger bindings for latest values
+        seriesData = Object.assign({}, seriesData)
         if (timestampSec > latestTimestamp) {
             latestTimestamp = timestampSec
         }
@@ -99,12 +105,24 @@ Window {
         const cutoff = nowTs - windowSeconds
         for (let i = 0; i < seriesOrder.length; i++) {
             const key = seriesOrder[i]
-            const series = seriesData[key] || []
-            while (series.length > 0 && series[0].t < cutoff) {
-                series.shift()
+            const series = seriesData[key] || ({ bfi: [], bvi: [] })
+            while (series.bfi.length > 0 && series.bfi[0].t < cutoff) {
+                series.bfi.shift()
+            }
+            while (series.bvi.length > 0 && series.bvi[0].t < cutoff) {
+                series.bvi.shift()
             }
         }
-        plotCanvas.requestPaint()
+        for (let i = 0; i < plotRepeater.count; i++) {
+            const item = plotRepeater.itemAt(i)
+            if (item && item.plotCanvas) {
+                item.plotCanvas.requestPaint()
+            }
+        }
+    }
+
+    function _formatValue(val) {
+        return isFinite(val) ? val.toFixed(2) : "--"
     }
 
     onClosing: {
@@ -128,147 +146,157 @@ Window {
             spacing: 10
 
             Text {
-                text: (plotMetric === "bfi" ? "BFI" : "Image Mean") + " (Last " + windowSeconds + "s)"
+                text: "Realtime BFI/BVI (Last " + windowSeconds + "s)"
                 color: "#FFFFFF"
                 font.pixelSize: 16
             }
 
             Item { Layout.fillWidth: true }
-
-            RowLayout {
-                spacing: 6
-                Text {
-                    text: "Mean"
-                    color: "#BDC3C7"
-                    font.pixelSize: 12
-                }
-                Switch {
-                    id: metricSwitch
-                    checked: plotMetric === "bfi"
-                    onToggled: plotMetric = checked ? "bfi" : "mean"
-                }
-                Text {
-                    text: "BFI"
-                    color: "#BDC3C7"
-                    font.pixelSize: 12
-                }
-            }
-
-            Repeater {
-                model: seriesOrder
-                delegate: RowLayout {
-                    spacing: 6
-                    Rectangle {
-                        width: 10
-                        height: 10
-                        radius: 5
-                        color: seriesColors[modelData] || "#BDC3C7"
-                    }
-                    Text {
-                        text: meanWindow._labelFor(modelData)
-                        color: "#BDC3C7"
-                        font.pixelSize: 12
-                    }
-                }
-            }
         }
 
-        Rectangle {
+        GridLayout {
+            id: plotGrid
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: "#1E1E20"
-            border.color: "#3E4E6F"
-            radius: 6
+            columns: plotColumns
+            rowSpacing: 10
+            columnSpacing: 10
 
-            Canvas {
-                id: plotCanvas
-                anchors.fill: parent
-                anchors.margins: 12
-                onPaint: {
-                    const ctx = getContext("2d")
-                    ctx.clearRect(0, 0, width, height)
+            Repeater {
+                id: plotRepeater
+                model: seriesOrder
+                delegate: Rectangle {
+                    property string seriesKey: modelData
+                    property alias plotCanvas: plotCanvas
+                    color: "#1E1E20"
+                    border.color: "#3E4E6F"
+                    radius: 6
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.preferredHeight: (plotGrid.height - (meanWindow.plotRows - 1) * plotGrid.rowSpacing) / meanWindow.plotRows
 
-                    const pad = 36
-                    const w = width - 2 * pad
-                    const h = height - 2 * pad
-                    if (w <= 0 || h <= 0)
-                        return
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 8
+                        spacing: 6
 
-                    const nowTs = meanWindow.latestTimestamp > 0 ? meanWindow.latestTimestamp : (Date.now() / 1000.0)
-                    const xMin = nowTs - meanWindow.windowSeconds
-                    const xMax = nowTs
-
-                    let maxVal = -Infinity
-                    let minVal = Infinity
-                    for (let i = 0; i < meanWindow.seriesOrder.length; i++) {
-                        const key = meanWindow.seriesOrder[i]
-                        const series = meanWindow.seriesData[key] || []
-                        for (let j = 0; j < series.length; j++) {
-                            if (series[j].v > maxVal)
-                                maxVal = series[j].v
-                            if (series[j].v < minVal)
-                                minVal = series[j].v
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Text {
+                                text: meanWindow._labelFor(seriesKey)
+                                color: "#FFFFFF"
+                                font.pixelSize: 12
+                            }
+                            Item { Layout.fillWidth: true }
+                            Text {
+                                text: "BFI: " + meanWindow._formatValue((meanWindow.seriesData[seriesKey] || {}).latestBfi)
+                                color: meanWindow.bfiColor
+                                font.pixelSize: 12
+                            }
+                            Text {
+                                text: "BVI: " + meanWindow._formatValue((meanWindow.seriesData[seriesKey] || {}).latestBvi)
+                                color: meanWindow.bviColor
+                                font.pixelSize: 12
+                            }
                         }
-                    }
-                    if (!isFinite(minVal) || !isFinite(maxVal)) {
-                        minVal = 0
-                        maxVal = 1
-                    } else if (minVal === maxVal) {
-                        minVal = minVal - 1
-                        maxVal = maxVal + 1
-                    }
-                    const yRange = maxVal - minVal
 
-                    // Axes
-                    ctx.strokeStyle = "#BDC3C7"
-                    ctx.lineWidth = 1
-                    ctx.beginPath()
-                    ctx.moveTo(pad, pad)
-                    ctx.lineTo(pad, pad + h)
-                    ctx.lineTo(pad + w, pad + h)
-                    ctx.stroke()
+                        Canvas {
+                            id: plotCanvas
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            onPaint: {
+                                const ctx = getContext("2d")
+                                ctx.clearRect(0, 0, width, height)
 
-                    // X-axis labels
-                    ctx.fillStyle = "#BDC3C7"
-                    ctx.font = "11px sans-serif"
-                    ctx.textAlign = "left"
-                    ctx.fillText("-" + meanWindow.windowSeconds + "s", pad, pad + h + 18)
-                    ctx.textAlign = "right"
-                    ctx.fillText("now", pad + w, pad + h + 18)
+                                const pad = 28
+                                const w = width - 2 * pad
+                                const h = height - 2 * pad
+                                if (w <= 0 || h <= 0)
+                                    return
 
-                    // Y-axis label
-                    ctx.save()
-                    ctx.translate(12, pad + h / 2)
-                    ctx.rotate(-Math.PI / 2)
-                    ctx.textAlign = "center"
-                    ctx.fillText(meanWindow.plotMetric === "bfi" ? "BFI" : "Mean", 0, 0)
-                    ctx.restore()
+                                const nowTs = meanWindow.latestTimestamp > 0 ? meanWindow.latestTimestamp : (Date.now() / 1000.0)
+                                const xMin = nowTs - meanWindow.windowSeconds
+                                const xMax = nowTs
 
-                    // Series lines
-                    for (let i = 0; i < meanWindow.seriesOrder.length; i++) {
-                        const key = meanWindow.seriesOrder[i]
-                        const series = meanWindow.seriesData[key] || []
-                        if (series.length < 2)
-                            continue
-                        ctx.strokeStyle = meanWindow.seriesColors[key] || "#4A90E2"
-                        ctx.lineWidth = 2
-                        ctx.beginPath()
-                        for (let j = 0; j < series.length; j++) {
-                            const pt = series[j]
-                            const x = pad + ((pt.t - xMin) / (xMax - xMin)) * w
-                            const y = pad + h - ((pt.v - minVal) / yRange) * h
-                            if (j === 0)
-                                ctx.moveTo(x, y)
-                            else
-                                ctx.lineTo(x, y)
+                                const data = meanWindow.seriesData[seriesKey] || ({ bfi: [], bvi: [] })
+                                const bfiSeries = data.bfi || []
+                                const bviSeries = data.bvi || []
+
+                                let maxVal = -Infinity
+                                let minVal = Infinity
+                                for (let j = 0; j < bfiSeries.length; j++) {
+                                    const v = bfiSeries[j].v
+                                    if (v > maxVal) maxVal = v
+                                    if (v < minVal) minVal = v
+                                }
+                                for (let j = 0; j < bviSeries.length; j++) {
+                                    const v = bviSeries[j].v
+                                    if (v > maxVal) maxVal = v
+                                    if (v < minVal) minVal = v
+                                }
+                                if (!isFinite(minVal) || !isFinite(maxVal)) {
+                                    minVal = 0
+                                    maxVal = 1
+                                } else if (minVal === maxVal) {
+                                    minVal = minVal - 1
+                                    maxVal = maxVal + 1
+                                }
+                                const yRange = maxVal - minVal
+
+                                // Axes
+                                ctx.strokeStyle = "#BDC3C7"
+                                ctx.lineWidth = 1
+                                ctx.beginPath()
+                                ctx.moveTo(pad, pad)
+                                ctx.lineTo(pad, pad + h)
+                                ctx.lineTo(pad + w, pad + h)
+                                ctx.stroke()
+
+                                // X-axis labels
+                                ctx.fillStyle = "#BDC3C7"
+                                ctx.font = "10px sans-serif"
+                                ctx.textAlign = "left"
+                                ctx.fillText("-" + meanWindow.windowSeconds + "s", pad, pad + h + 16)
+                                ctx.textAlign = "right"
+                                ctx.fillText("now", pad + w, pad + h + 16)
+
+                                // Y-axis label
+                                ctx.save()
+                                ctx.translate(12, pad + h / 2)
+                                ctx.rotate(-Math.PI / 2)
+                                ctx.textAlign = "center"
+                                ctx.fillText("BFI/BVI", 0, 0)
+                                ctx.restore()
+
+                                function drawSeries(series, color) {
+                                    if (series.length < 2)
+                                        return
+                                    ctx.strokeStyle = color
+                                    ctx.lineWidth = 2
+                                    ctx.beginPath()
+                                    for (let j = 0; j < series.length; j++) {
+                                        const pt = series[j]
+                                        const x = pad + ((pt.t - xMin) / (xMax - xMin)) * w
+                                        const y = pad + h - ((pt.v - minVal) / yRange) * h
+                                        if (j === 0)
+                                            ctx.moveTo(x, y)
+                                        else
+                                            ctx.lineTo(x, y)
+                                    }
+                                    ctx.stroke()
+                                }
+
+                                drawSeries(bfiSeries, meanWindow.bfiColor)
+                                drawSeries(bviSeries, meanWindow.bviColor)
+
+                                if (bfiSeries.length === 0 && bviSeries.length === 0) {
+                                    ctx.fillStyle = "#7F8C8D"
+                                    ctx.textAlign = "center"
+                                    ctx.fillText("Waiting for data...", pad + w / 2, pad + h / 2)
+                                }
+                            }
                         }
-                        ctx.stroke()
-                    }
-
-                    if (meanWindow.seriesOrder.length === 0) {
-                        ctx.fillStyle = "#7F8C8D"
-                        ctx.textAlign = "center"
-                        ctx.fillText("Waiting for data...", pad + w / 2, pad + h / 2)
                     }
                 }
             }
@@ -278,14 +306,13 @@ Window {
     Connections {
         target: MOTIONInterface
         function onScanMeanSampled(side, camId, timestampSec, meanVal) {
-            if (meanWindow.plotMetric === "mean") {
-                meanWindow.handleSample(side, camId, timestampSec, meanVal)
-            }
+            // Mean samples are no longer plotted in this window.
         }
         function onScanBfiSampled(side, camId, timestampSec, bfiVal) {
-            if (meanWindow.plotMetric === "bfi") {
-                meanWindow.handleSample(side, camId, timestampSec, bfiVal)
-            }
+            meanWindow.handleBfiSample(side, camId, timestampSec, bfiVal)
+        }
+        function onScanBviSampled(side, camId, timestampSec, bviVal) {
+            meanWindow.handleBviSample(side, camId, timestampSec, bviVal)
         }
     }
 }
