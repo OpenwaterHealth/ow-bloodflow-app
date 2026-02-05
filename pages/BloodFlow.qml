@@ -17,6 +17,7 @@ Rectangle {
     opacity: 0.95 // Slight transparency for the content area
 
     property bool advancedSensors: (AppFlags && AppFlags.advancedSensors) ? AppFlags.advancedSensors : false
+    property bool realtimePlotEnabled: (AppFlags && AppFlags.realtimePlotEnabled) ? AppFlags.realtimePlotEnabled : false
     // property to store selected directory
     property string defaultDataDir: ""
 
@@ -596,7 +597,9 @@ Rectangle {
                                 scanDialog.stageText = "Preparing…";
                                 scanDialog.progress = 1;
                                 scanDialog.open();
-                                meanPlotWindow.startScan(bloodFlow.leftMask, bloodFlow.rightMask);
+                                if (realtimePlotEnabled) {
+                                    meanPlotWindow.startScan(bloodFlow.leftMask, bloodFlow.rightMask);
+                                }
                                 scanRunner.start();
                             }
                         }
@@ -724,7 +727,9 @@ Rectangle {
             if (err === "Canceled") {
                 // Cancel should CLOSE the dialog
                 scanDialog.close()
-                meanPlotWindow.stopScan()
+                if (realtimePlotEnabled) {
+                    meanPlotWindow.stopScan()
+                }
                 return
             }
 
@@ -733,7 +738,9 @@ Rectangle {
                 scanDialog.stageText = "Error during capture";
                 // keep it open so you can read the error
                 scanDialog.done = true
-                meanPlotWindow.stopScan()
+                if (realtimePlotEnabled) {
+                    meanPlotWindow.stopScan()
+                }
                 return;
             }
 
@@ -741,7 +748,9 @@ Rectangle {
             scanDialog.stageText = "Capture complete"
             scanDialog.progress = 100
             scanDialog.done = true
-            meanPlotWindow.stopScan()
+            if (realtimePlotEnabled) {
+                meanPlotWindow.stopScan()
+            }
             // scanDialog.close();
         }
     }

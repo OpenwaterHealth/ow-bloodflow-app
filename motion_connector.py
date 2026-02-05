@@ -88,6 +88,8 @@ class MOTIONConnector(QObject):
     scanMeanSampled = pyqtSignal(str, int, float, float)  # side, cam_id, timestamp_s, mean
     scanBfiSampled = pyqtSignal(str, int, float, float)   # side, cam_id, timestamp_s, bfi
     scanBviSampled = pyqtSignal(str, int, float, float)   # side, cam_id, timestamp_s, bvi
+    scanBfiCorrectedSampled = pyqtSignal(str, int, float, float)  # side, cam_id, timestamp_s, bfi
+    scanBviCorrectedSampled = pyqtSignal(str, int, float, float)  # side, cam_id, timestamp_s, bvi
 
     # post-processing signals
     postProgress = pyqtSignal(int)
@@ -140,6 +142,10 @@ class MOTIONConnector(QObject):
         self._console_status_thread = None
 
         self._console_mutex = QRecursiveMutex()
+        self._corr_queue = queue.Queue()
+        self._corr_stop = threading.Event()
+        self._corr_thread = threading.Thread(target=self._correction_worker, daemon=True)
+        self._corr_thread.start()
 
         self._sensor_mutex = [QRecursiveMutex() , QRecursiveMutex()] # mutexes in [left,right] order
 
@@ -2038,6 +2044,7 @@ class MOTIONConnector(QObject):
                         self.scanMeanSampled.emit(side, int(cam_id), float(timestamp), mean_val)
                         self.scanBfiSampled.emit(side, int(cam_id), float(timestamp), float(bfi_val))
                         self.scanBviSampled.emit(side, int(cam_id), float(timestamp), float(bvi_val))
+                        self._corr_queue.put((side, int(cam_id), float(timestamp), mean_val, float(bfi_val), float(bvi_val)))
                     except Exception:
                         # Don't let plotting errors break the writer thread
                         return
@@ -2057,6 +2064,39 @@ class MOTIONConnector(QObject):
         motion_interface.signal_connect.connect(self.on_connected)
         motion_interface.signal_disconnect.connect(self.on_disconnected)
         motion_interface.signal_data_received.connect(self.on_data_received)
+
+    def _correction_worker(self):
+        per_camera_state = {}
+        while not self._corr_stop.is_set():
+            try:
+                side, cam_id, timestamp, mean_val, bfi_val, bvi_val = self._corr_queue.get(timeout=0.25)
+            except queue.Empty:
+                continue
+            key = (side, cam_id)
+            state = per_camera_state.get(key)
+            if state is None:
+                state = {"count": 0, "last_bfi": None, "last_bvi": None}
+                per_camera_state[key] = state
+
+            state["count"] += 1
+            if state["count"] <= 10:
+                continue
+
+            if mean_val < 66 and state["last_bfi"] is not None:
+                bfi_corr = state["last_bfi"]
+            else:
+                bfi_corr = bfi_val
+
+            if mean_val < 66 and state["last_bvi"] is not None:
+                bvi_corr = state["last_bvi"]
+            else:
+                bvi_corr = bvi_val
+
+            state["last_bfi"] = bfi_corr
+            state["last_bvi"] = bvi_corr
+
+            self.scanBfiCorrectedSampled.emit(side, cam_id, timestamp, bfi_corr)
+            self.scanBviCorrectedSampled.emit(side, cam_id, timestamp, bvi_corr)
 
     @property
     def interface(self):

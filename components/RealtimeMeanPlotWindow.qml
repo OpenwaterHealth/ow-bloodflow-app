@@ -343,12 +343,12 @@ Window {
     Connections {
         target: MOTIONInterface
         function onScanMeanSampled(side, camId, timestampSec, meanVal) {
-            // Mean samples are no longer plotted in this window.
+            // Mean samples are used by backend correction worker.
         }
-        function onScanBfiSampled(side, camId, timestampSec, bfiVal) {
+        function onScanBfiCorrectedSampled(side, camId, timestampSec, bfiVal) {
             meanWindow.handleBfiSample(side, camId, timestampSec, bfiVal)
         }
-        function onScanBviSampled(side, camId, timestampSec, bviVal) {
+        function onScanBviCorrectedSampled(side, camId, timestampSec, bviVal) {
             meanWindow.handleBviSample(side, camId, timestampSec, bviVal)
         }
     }
