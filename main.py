@@ -17,7 +17,7 @@ from motion_connector import MOTIONConnector
 from pathlib import Path
 
 
-APP_VERSION = "0.4.2"
+APP_VERSION = "0.4.3"
 
 
 logger = logging.getLogger("openmotion.bloodflow-app")
