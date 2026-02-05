@@ -20,7 +20,7 @@ Remove-Item -Recurse -Force build, dist
 python -m PyInstaller -y openwater.spec
 
 ## Antivirus Note
-Some antiviruses may block the software from running such as Microsoft Defender or Smart App Control on Windows 11. Future production versions of the software will not have this issue but during development or for custom builds this may not be avoidable. 
+Some antivirus software may block the Open-Motion application from running such as Microsoft Defender or Smart App Control on Windows 11. Users may need to disable parts of their antivirus software if this prevents them from using the Open-Motion application.
 
 [Here is a guide that will help you turn Smart App Control on Win11 off.](https://www.ninjaone.com/blog/how-to-turn-off-smart-app-control-in-windows-11/)
 
