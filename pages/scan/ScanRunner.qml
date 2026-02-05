@@ -127,7 +127,6 @@ QtObject {
         stageUpdate("Preparing…")
         messageOut("ScanRunner: start()")
         flashTask.run()
-        stageUpdate("done2")
     }
 
     function cancel() {
