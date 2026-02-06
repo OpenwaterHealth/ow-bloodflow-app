@@ -17,7 +17,7 @@ from motion_connector import MOTIONConnector
 from pathlib import Path
 
 
-APP_VERSION = "0.4.2"
+APP_VERSION = "0.4.3"
 
 
 logger = logging.getLogger("openmotion.bloodflow-app")
@@ -117,7 +117,8 @@ def main():
     connector = MOTIONConnector(advanced_sensors=True)
     qmlRegisterSingletonInstance("OpenMotion", 1, 0, "MOTIONInterface", connector)
     engine.rootContext().setContextProperty("AppFlags", {
-        "advancedSensors": True
+        "advancedSensors": True,
+        "realtimePlotEnabled": False
     })
     engine.rootContext().setContextProperty("appVersion", APP_VERSION)
 

@@ -11,13 +11,15 @@ import os
 import datetime
 import time
 import random
+import math
 import re
 import string
 import platform
 import socket
 
 from motion_singleton import motion_interface  
-from processing.data_processing import DataProcessor 
+from omotion.config import DEBUG_FLAG_USB_PRINTF
+from processing.data_processing import DataProcessor, HISTO_BINS
 from processing.visualize_bloodflow import VisualizeBloodflow
 from utils.resource_path import resource_path
 import struct
@@ -32,6 +34,13 @@ R_1 = 18000 #(R221)
 R_2 = 8160  #(R224)
 R_3 = 51100 #(R225)
 TEC_VOLTAGE_DEFAULT = 1.1  # volts
+
+HISTO_BINS_SQ = HISTO_BINS * HISTO_BINS
+_BFI_CAL = VisualizeBloodflow(left_csv="", right_csv="")
+_BFI_C_MIN = _BFI_CAL.C_min
+_BFI_C_MAX = _BFI_CAL.C_max
+_BFI_I_MIN = _BFI_CAL.I_min
+_BFI_I_MAX = _BFI_CAL.I_max
 
 # Global loggers - will be configured by _configure_logging method
 logger = logging.getLogger("openmotion.bloodflow-app.connector")
@@ -76,6 +85,11 @@ class MOTIONConnector(QObject):
     captureLog = pyqtSignal(str)                            # log lines
     captureFinished = pyqtSignal(bool, str, str, str)       # ok, error, leftPath, rightPath
     scanNotesChanged = pyqtSignal()
+    scanMeanSampled = pyqtSignal(str, int, float, float)  # side, cam_id, timestamp_s, mean
+    scanBfiSampled = pyqtSignal(str, int, float, float)   # side, cam_id, timestamp_s, bfi
+    scanBviSampled = pyqtSignal(str, int, float, float)   # side, cam_id, timestamp_s, bvi
+    scanBfiCorrectedSampled = pyqtSignal(str, int, float, float)  # side, cam_id, timestamp_s, bfi
+    scanBviCorrectedSampled = pyqtSignal(str, int, float, float)  # side, cam_id, timestamp_s, bvi
 
     # post-processing signals
     postProgress = pyqtSignal(int)
@@ -128,6 +142,10 @@ class MOTIONConnector(QObject):
         self._console_status_thread = None
 
         self._console_mutex = QRecursiveMutex()
+        self._corr_queue = queue.Queue()
+        self._corr_stop = threading.Event()
+        self._corr_thread = threading.Thread(target=self._correction_worker, daemon=True)
+        self._corr_thread.start()
 
         self._sensor_mutex = [QRecursiveMutex() , QRecursiveMutex()] # mutexes in [left,right] order
 
@@ -164,6 +182,14 @@ class MOTIONConnector(QObject):
         self._subject_id = self.generate_subject_id()
         logger.info(f"[Connector] Generated subject ID: {self._subject_id}")
 
+        # Emit synthetic connect events for devices already connected at startup
+        if self._leftSensorConnected:
+            self.on_connected("SENSOR_LEFT", "startup")
+        if self._rightSensorConnected:
+            self.on_connected("SENSOR_RIGHT", "startup")
+        if self._consoleConnected:
+            self.on_connected("CONSOLE", "startup")
+
         # Start console status thread if console is already connected at startup
         if self._consoleConnected and self._console_status_thread is None:
             logger.info("[Connector] Console already connected at startup, starting status thread")
@@ -194,6 +220,27 @@ class MOTIONConnector(QObject):
         except Exception as e:
             self._data_RT = None
             logger.error(f"Failed to load RT model: {e}")
+
+    def _enable_sensor_debug_logging(self, side: str):
+        sensor = motion_interface.sensors.get(side)
+        if sensor is None:
+            logger.warning(f"Sensor debug logging skipped: {side} sensor not available")
+            return
+
+        idx = 0 if side == "left" else 1
+        self._sensor_mutex[idx].lock()
+        try:
+            if not sensor.is_connected():
+                logger.warning(f"Sensor debug logging skipped: {side} sensor not connected")
+                return
+
+            logger.info(f"Requesting sensor debug logging enable for {side} sensor")
+            if sensor.set_debug_flags(DEBUG_FLAG_USB_PRINTF):
+                logger.info(f"Enabled sensor debug logging for {side} sensor")
+            else:
+                logger.warning(f"Failed to enable sensor debug logging for {side} sensor")
+        finally:
+            self._sensor_mutex[idx].unlock()
 
     def _start_runlog(self, subject_id: str = None):
         """
@@ -565,8 +612,10 @@ class MOTIONConnector(QObject):
         logger.info(f"Device connected: {descriptor} on port {port}")
         if descriptor.upper() == "SENSOR_LEFT":
             self._leftSensorConnected = True
+            self._enable_sensor_debug_logging("left")
         if descriptor.upper() == "SENSOR_RIGHT":
             self._rightSensorConnected = True
+            self._enable_sensor_debug_logging("right")
         elif descriptor.upper() == "CONSOLE":
             self._consoleConnected = True
             self._console_mutex.lock()
@@ -909,7 +958,7 @@ class MOTIONConnector(QObject):
                     filepath = os.path.join(data_dir, filename)
                     t = threading.Thread(
                         target=self._write_stream_to_file,
-                        args=(q, stop_evt, filepath),
+                        args=(q, stop_evt, filepath, side),
                         daemon=True,
                     )
                     t.start()
@@ -1939,7 +1988,7 @@ class MOTIONConnector(QObject):
         logger.info(f"Data received from {descriptor}: {message}")
         self.signalDataReceived.emit(descriptor, message)
     
-    def _write_stream_to_file(self, q: queue.Queue, stop_evt: threading.Event, filename: str):
+    def _write_stream_to_file(self, q: queue.Queue, stop_evt: threading.Event, filename: str, side: str):
         """
         Parse streaming binary data and write to CSV file.
         Uses the parser from parse_data_v2.py to convert binary packets to CSV rows.
@@ -1961,9 +2010,47 @@ class MOTIONConnector(QObject):
                 def _extra_cols():
                     with self._telemetry_lock:
                         return [int(self._tcm), int(self._tcl), f"{float(self._pdc):.3f}"]
+                def _on_row(cam_id, frame_id, ts_val, hist, row_sum):
+                    try:
+                        if row_sum > 0:
+                            mean_val = float(np.dot(hist, HISTO_BINS) / row_sum)
+                        else:
+                            mean_val = 0.0
+                        if row_sum > 0 and mean_val > 0:
+                            mean2 = float(np.dot(hist, HISTO_BINS_SQ) / row_sum)
+                            var = max(0.0, mean2 - (mean_val * mean_val))
+                            std = math.sqrt(var)
+                            contrast = std / mean_val if mean_val > 0 else 0.0
+                        else:
+                            contrast = 0.0
+
+                        module_idx = 0 if side == "left" else 1
+                        cam_pos = int(cam_id) % 8
+                        if module_idx >= _BFI_C_MIN.shape[0] or cam_pos >= _BFI_C_MIN.shape[1]:
+                            bfi_val = contrast * 10.0
+                        else:
+                            cmin = float(_BFI_C_MIN[module_idx, cam_pos])
+                            cmax = float(_BFI_C_MAX[module_idx, cam_pos])
+                            cden = (cmax - cmin) or 1.0
+                            bfi_val = (1.0 - ((contrast - cmin) / cden)) * 10.0
+                        if module_idx >= _BFI_I_MIN.shape[0] or cam_pos >= _BFI_I_MIN.shape[1]:
+                            bvi_val = mean_val * 10.0
+                        else:
+                            imin = float(_BFI_I_MIN[module_idx, cam_pos])
+                            imax = float(_BFI_I_MAX[module_idx, cam_pos])
+                            iden = (imax - imin) or 1.0
+                            bvi_val = (1.0 - ((mean_val - imin) / iden)) * 10.0
+                        timestamp = float(ts_val) if ts_val else time.time()
+                        self.scanMeanSampled.emit(side, int(cam_id), float(timestamp), mean_val)
+                        self.scanBfiSampled.emit(side, int(cam_id), float(timestamp), float(bfi_val))
+                        self.scanBviSampled.emit(side, int(cam_id), float(timestamp), float(bvi_val))
+                        self._corr_queue.put((side, int(cam_id), float(timestamp), mean_val, float(bfi_val), float(bvi_val)))
+                    except Exception:
+                        # Don't let plotting errors break the writer thread
+                        return
 
                 rows_written = proc.parse_stream_to_csv(
-                    q, stop_evt, csv_writer, buffer_accumulator, extra_cols_fn=_extra_cols
+                    q, stop_evt, csv_writer, buffer_accumulator, extra_cols_fn=_extra_cols, on_row_fn=_on_row
                 )
                 
                 logger.info(f"Wrote {rows_written} rows to {filename}")
@@ -1977,6 +2064,39 @@ class MOTIONConnector(QObject):
         motion_interface.signal_connect.connect(self.on_connected)
         motion_interface.signal_disconnect.connect(self.on_disconnected)
         motion_interface.signal_data_received.connect(self.on_data_received)
+
+    def _correction_worker(self):
+        per_camera_state = {}
+        while not self._corr_stop.is_set():
+            try:
+                side, cam_id, timestamp, mean_val, bfi_val, bvi_val = self._corr_queue.get(timeout=0.25)
+            except queue.Empty:
+                continue
+            key = (side, cam_id)
+            state = per_camera_state.get(key)
+            if state is None:
+                state = {"count": 0, "last_bfi": None, "last_bvi": None}
+                per_camera_state[key] = state
+
+            state["count"] += 1
+            if state["count"] <= 10:
+                continue
+
+            if mean_val < 66 and state["last_bfi"] is not None:
+                bfi_corr = state["last_bfi"]
+            else:
+                bfi_corr = bfi_val
+
+            if mean_val < 66 and state["last_bvi"] is not None:
+                bvi_corr = state["last_bvi"]
+            else:
+                bvi_corr = bvi_val
+
+            state["last_bfi"] = bfi_corr
+            state["last_bvi"] = bvi_corr
+
+            self.scanBfiCorrectedSampled.emit(side, cam_id, timestamp, bfi_corr)
+            self.scanBviCorrectedSampled.emit(side, cam_id, timestamp, bvi_corr)
 
     @property
     def interface(self):
