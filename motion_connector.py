@@ -244,6 +244,8 @@ class MOTIONConnector(QObject):
         if side == "right" and not self._rightSensorConnected:
             return
         self._enable_sensor_debug_logging(side)
+        self.getFanControlStatus(side)
+        self.connectionStatusChanged.emit()
 
     def _start_runlog(self, subject_id: str = None):
         """
@@ -2132,7 +2134,7 @@ class _ConfigureWorker(QThread):
             if self._stop:
                 self.finished.emit(False, "Canceled")
                 return
-
+            time.sleep(0.1)
             # 2) Configure camera registers
             msg = f"Configuring {side} camera sensor registers at position {pos1}…"
             logger.info(msg)
