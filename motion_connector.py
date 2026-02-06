@@ -1,4 +1,4 @@
-from PyQt6.QtCore import QObject, pyqtSignal, pyqtProperty, pyqtSlot, QVariant, QThread, QWaitCondition, QMutex
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtProperty, pyqtSlot, QVariant, QThread, QWaitCondition, QMutex, QTimer
 from typing import List
 from pathlib import Path
 import logging
@@ -233,6 +233,17 @@ class MOTIONConnector(QObject):
             logger.info(f"Enabled sensor debug logging for {side} sensor")
         else:
             logger.warning(f"Failed to enable sensor debug logging for {side} sensor")
+
+    def _schedule_sensor_init(self, side: str):
+        """Delay initial sensor commands to allow USB settle."""
+        QTimer.singleShot(1000, lambda: self._run_sensor_init(side))
+
+    def _run_sensor_init(self, side: str):
+        if side == "left" and not self._leftSensorConnected:
+            return
+        if side == "right" and not self._rightSensorConnected:
+            return
+        self._enable_sensor_debug_logging(side)
 
     def _start_runlog(self, subject_id: str = None):
         """
@@ -587,10 +598,10 @@ class MOTIONConnector(QObject):
         logger.info(f"Device connected: {descriptor} on port {port}")
         if descriptor.upper() == "SENSOR_LEFT":
             self._leftSensorConnected = True
-            self._enable_sensor_debug_logging("left")
+            self._schedule_sensor_init("left")
         if descriptor.upper() == "SENSOR_RIGHT":
             self._rightSensorConnected = True
-            self._enable_sensor_debug_logging("right")
+            self._schedule_sensor_init("right")
         elif descriptor.upper() == "CONSOLE":
             self._consoleConnected = True
             if motion_interface.console_module.tec_voltage(self._tec_voltage_default):
