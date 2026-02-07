@@ -1,4 +1,4 @@
-from PyQt6.QtCore import QObject, pyqtSignal, pyqtProperty, pyqtSlot, QVariant, QThread, QWaitCondition, QMutex, QRecursiveMutex, QMutexLocker
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtProperty, pyqtSlot, QVariant, QThread, QWaitCondition, QMutex, QTimer
 from typing import List
 from pathlib import Path
 import logging
@@ -141,13 +141,10 @@ class MOTIONConnector(QObject):
         self._viz_worker = None
         self._console_status_thread = None
 
-        self._console_mutex = QRecursiveMutex()
         self._corr_queue = queue.Queue()
         self._corr_stop = threading.Event()
         self._corr_thread = threading.Thread(target=self._correction_worker, daemon=True)
         self._corr_thread.start()
-
-        self._sensor_mutex = [QRecursiveMutex() , QRecursiveMutex()] # mutexes in [left,right] order
 
         self._tcm = 0.0
         self._tcl = 0.0
@@ -227,20 +224,28 @@ class MOTIONConnector(QObject):
             logger.warning(f"Sensor debug logging skipped: {side} sensor not available")
             return
 
-        idx = 0 if side == "left" else 1
-        self._sensor_mutex[idx].lock()
-        try:
-            if not sensor.is_connected():
-                logger.warning(f"Sensor debug logging skipped: {side} sensor not connected")
-                return
+        if not sensor.is_connected():
+            logger.warning(f"Sensor debug logging skipped: {side} sensor not connected")
+            return
 
-            logger.info(f"Requesting sensor debug logging enable for {side} sensor")
-            if sensor.set_debug_flags(DEBUG_FLAG_USB_PRINTF):
-                logger.info(f"Enabled sensor debug logging for {side} sensor")
-            else:
-                logger.warning(f"Failed to enable sensor debug logging for {side} sensor")
-        finally:
-            self._sensor_mutex[idx].unlock()
+        logger.info(f"Requesting sensor debug logging enable for {side} sensor")
+        if sensor.set_debug_flags(DEBUG_FLAG_USB_PRINTF):
+            logger.info(f"Enabled sensor debug logging for {side} sensor")
+        else:
+            logger.warning(f"Failed to enable sensor debug logging for {side} sensor")
+
+    def _schedule_sensor_init(self, side: str):
+        """Delay initial sensor commands to allow USB settle."""
+        QTimer.singleShot(1000, lambda: self._run_sensor_init(side))
+
+    def _run_sensor_init(self, side: str):
+        if side == "left" and not self._leftSensorConnected:
+            return
+        if side == "right" and not self._rightSensorConnected:
+            return
+        self._enable_sensor_debug_logging(side)
+        self.getFanControlStatus(side)
+        self.connectionStatusChanged.emit()
 
     def _start_runlog(self, subject_id: str = None):
         """
@@ -313,12 +318,7 @@ class MOTIONConnector(QObject):
 
         # Console firmware version (from console module) :contentReference[oaicite:5]{index=5}
         try:
-            # _console_mutex is a QRecursiveMutex so re-locking is safe if we're already in startTrigger
-            self._console_mutex.lock()
-            try:
-                fw_ver = motion_interface.console_module.get_version()
-            finally:
-                self._console_mutex.unlock()
+            fw_ver = motion_interface.console_module.get_version()
         except Exception as e:
             fw_ver = f"ERROR({e})"
 
@@ -471,14 +471,10 @@ class MOTIONConnector(QObject):
             # Console information
             if self._consoleConnected:
                 try:
-                    self._console_mutex.lock()
-                    try:
-                        fw_version = motion_interface.console_module.get_version()
-                        hw_id = motion_interface.console_module.get_hardware_id()
-                        device_id = base58.b58encode(bytes.fromhex(hw_id)).decode()
-                        run_logger.info(f"Console - Firmware: {fw_version}, Device ID: {device_id}")
-                    finally:
-                        self._console_mutex.unlock()
+                    fw_version = motion_interface.console_module.get_version()
+                    hw_id = motion_interface.console_module.get_hardware_id()
+                    device_id = base58.b58encode(bytes.fromhex(hw_id)).decode()
+                    run_logger.info(f"Console - Firmware: {fw_version}, Device ID: {device_id}")
                 except Exception as e:
                     run_logger.warning(f"Console - Failed to get device info: {e}")
             else:
@@ -489,14 +485,10 @@ class MOTIONConnector(QObject):
                 try:
                     sensor = motion_interface.sensors.get("left")
                     if sensor is not None:
-                        self._sensor_mutex[0].lock()
-                        try:
-                            fw_version = sensor.get_version()
-                            hw_id = sensor.get_hardware_id()
-                            device_id = base58.b58encode(bytes.fromhex(hw_id)).decode()
-                            run_logger.info(f"Left Sensor - Firmware: {fw_version}, Device ID: {device_id}")
-                        finally:
-                            self._sensor_mutex[0].unlock()
+                        fw_version = sensor.get_version()
+                        hw_id = sensor.get_hardware_id()
+                        device_id = base58.b58encode(bytes.fromhex(hw_id)).decode()
+                        run_logger.info(f"Left Sensor - Firmware: {fw_version}, Device ID: {device_id}")
                     else:
                         run_logger.warning("Left Sensor - Sensor object is None")
                 except Exception as e:
@@ -509,14 +501,10 @@ class MOTIONConnector(QObject):
                 try:
                     sensor = motion_interface.sensors.get("right")
                     if sensor is not None:
-                        self._sensor_mutex[1].lock()
-                        try:
-                            fw_version = sensor.get_version()
-                            hw_id = sensor.get_hardware_id()
-                            device_id = base58.b58encode(bytes.fromhex(hw_id)).decode()
-                            run_logger.info(f"Right Sensor - Firmware: {fw_version}, Device ID: {device_id}")
-                        finally:
-                            self._sensor_mutex[1].unlock()
+                        fw_version = sensor.get_version()
+                        hw_id = sensor.get_hardware_id()
+                        device_id = base58.b58encode(bytes.fromhex(hw_id)).decode()
+                        run_logger.info(f"Right Sensor - Firmware: {fw_version}, Device ID: {device_id}")
                     else:
                         run_logger.warning("Right Sensor - Sensor object is None")
                 except Exception as e:
@@ -612,13 +600,12 @@ class MOTIONConnector(QObject):
         logger.info(f"Device connected: {descriptor} on port {port}")
         if descriptor.upper() == "SENSOR_LEFT":
             self._leftSensorConnected = True
-            self._enable_sensor_debug_logging("left")
+            self._schedule_sensor_init("left")
         if descriptor.upper() == "SENSOR_RIGHT":
             self._rightSensorConnected = True
-            self._enable_sensor_debug_logging("right")
+            self._schedule_sensor_init("right")
         elif descriptor.upper() == "CONSOLE":
             self._consoleConnected = True
-            self._console_mutex.lock()
             if motion_interface.console_module.tec_voltage(self._tec_voltage_default):
                 logger.info(f"Console TEC voltage set to {self._tec_voltage_default}V")
             else:
@@ -627,7 +614,6 @@ class MOTIONConnector(QObject):
                 logger.info("Console fan speed set to 50%")
             else:
                 logger.error("Failed to set console fan speed")
-            self._console_mutex.unlock()
             # Start console status thread when console connects
             if self._console_status_thread is None:
                 self._console_status_thread = ConsoleStatusThread(self)
@@ -652,7 +638,7 @@ class MOTIONConnector(QObject):
                 self._console_status_thread.stop()
                 self._console_status_thread = None
 
-        logger.info(f"Device disconnected: {descriptor} on port {port}")
+        logger.info(f"Device disconnected: {descriptor} on port {port} and state is {self._state}")
         self.signalDisconnected.emit(descriptor, port)
         self.connectionStatusChanged.emit() 
         self.update_state()
@@ -918,9 +904,7 @@ class MOTIONConnector(QObject):
                     logger.info("Enabling external frame sync…")
                     self.captureLog.emit("Enabling external frame sync…")
                     for side, _, _ in active_sides:
-                        self._sensor_mutex[side=="right"].lock()
                         res = interface.run_on_sensors("enable_camera_fsin_ext", target=side)
-                        self._sensor_mutex[side=="right"].unlock()
                         if not _ok_from_result(res, side):
                             logger.error(f"Failed to enable external frame sync on {side}.")
                             err = f"Failed to enable external frame sync on {side}."
@@ -931,9 +915,7 @@ class MOTIONConnector(QObject):
                 logger.info("Enabling cameras…")
                 self.captureLog.emit("Enabling cameras…")
                 for side, mask, _ in active_sides:
-                    self._sensor_mutex[side=="right"].lock()
                     res = interface.run_on_sensors("enable_camera", mask, target=side)
-                    self._sensor_mutex[side=="right"].unlock()
                     if not _ok_from_result(res, side):
                         logger.error(f"Failed to enable camera on {side} (mask 0x{mask:02X}).")
                         err = f"Failed to enable camera on {side} (mask 0x{mask:02X})."
@@ -976,17 +958,14 @@ class MOTIONConnector(QObject):
 
                 # Start trigger (once)
                 self.captureLog.emit("Starting trigger…")
-                self._console_mutex.lock()
                 if not interface.console_module.start_trigger():
                     err = "Failed to start trigger."
                     self.captureLog.emit(err)
-                    self._console_mutex.unlock()
                     raise RuntimeError(err)
                 
 
                 logger.info("TRIGGER STARTED")
                 
-                self._console_mutex.unlock()
                 self._trigger_state = "ON"
                 self.triggerStateChanged.emit()
 
@@ -1005,21 +984,15 @@ class MOTIONConnector(QObject):
 
                 # Stop trigger (once)
                 self.captureLog.emit("Stopping trigger…")
-                try:
-                    self._console_mutex.lock()
-                    interface.console_module.stop_trigger()
-                    self._console_mutex.unlock()
-                finally:
-                    self._trigger_state = "OFF"
-                    self.triggerStateChanged.emit()
+                interface.console_module.stop_trigger()
+                self._trigger_state = "OFF"
+                self.triggerStateChanged.emit()
                 time.sleep(1)
 
                 # Disable cameras per active side
                 self.captureLog.emit("Disabling cameras…")
                 for side, mask, _ in active_sides:
-                    self._sensor_mutex[side=="right"].lock()
                     res = interface.run_on_sensors("disable_camera", mask, target=side)
-                    self._sensor_mutex[side=="right"].unlock()
                     if not _ok_from_result(res, side):
                         self.captureLog.emit(f"Failed to disable camera on {side} (mask 0x{mask:02X}).")
                 # Stop sensor streaming
@@ -1065,9 +1038,6 @@ class MOTIONConnector(QObject):
                 self._capture_running = False
                 self._capture_thread = None
                 self.captureFinished.emit(ok, err, left_path, right_path)
-                self._sensor_mutex[0].unlock()  # unlock all mutexes at end of capture (should be already unlocked)
-                self._sensor_mutex[1].unlock()
-                self._console_mutex.unlock()
                 self._stop_runlog()
         # launch worker
         self._capture_thread = threading.Thread(target=_worker, daemon=True)
@@ -1151,13 +1121,10 @@ class MOTIONConnector(QObject):
         self._capture_stop.set()
         # also stop trigger ASAP
         try:
-            self._console_mutex.lock()
             self._interface.console_module.stop_trigger()
             self._trigger_state = "OFF"; self.triggerStateChanged.emit()
         except Exception:
             pass
-        finally:
-            self._console_mutex.unlock()
     
     @pyqtSlot(result=QVariant)
     def tec_status(self):
@@ -1166,7 +1133,6 @@ class MOTIONConnector(QObject):
         On error: { ok: False, error: "..." }
         """
 
-        self._console_mutex.lock()
         try:
             v, i, p, t, ok = motion_interface.console_module.tec_status()
 
@@ -1197,8 +1163,6 @@ class MOTIONConnector(QObject):
         except Exception as e:
             logger.error(f"Error in TEC status operation: {e}")
             return False
-        finally:
-            self._console_mutex.unlock()
 
     @pyqtSlot(result=QVariant)
     def pdu_mon(self):
@@ -1213,7 +1177,6 @@ class MOTIONConnector(QObject):
         On error:
           { "ok": False, "error": "..." }
         """
-        self._console_mutex.lock()
         try:
             pdu = motion_interface.console_module.read_pdu_mon()
             if pdu is None:
@@ -1266,8 +1229,6 @@ class MOTIONConnector(QObject):
         except Exception as e:
             logger.error("Error in PDU MON operation: %s", e)
             return {"ok": False, "error": str(e)}
-        finally:
-            self._console_mutex.unlock()
 
     @pyqtSlot()
     def readSafetyStatus(self):
@@ -1302,13 +1263,12 @@ class MOTIONConnector(QObject):
                     self.laserStateChanged.emit(False)
 
         except Exception as e:
-            logger.error(f"Console status query failed: {e}")
+            logger.error(f"readSafetyStatus status query failed: {e}")
             self.safetyFailure(True)
 
     @pyqtSlot(str, int, int, int, int, int, result=QVariant)
     def i2cReadBytes(self, target: str, mux_idx: int, channel: int, i2c_addr: int, offset: int, data_len: int):
         """Send i2c read to device"""
-        self._console_mutex.lock()  # Lock auto-released at function exit
         try:
             # logger.info(f"I2C Read Request -> target={target}, mux_idx={mux_idx}, channel={channel}, "
                 # f"i2c_addr=0x{int(i2c_addr):02X}, offset=0x{int(offset):02X}, read_len={int(data_len)}"
@@ -1330,8 +1290,6 @@ class MOTIONConnector(QObject):
         except Exception as e:
             logger.error(f"Error sending i2c read command: {e}")
             return []
-        finally:
-            self._console_mutex.unlock()
     @pyqtSlot(int)
     def setRGBState(self, state):
         """Set the RGB state using integer values."""
@@ -1340,20 +1298,16 @@ class MOTIONConnector(QObject):
             if state not in valid_states:
                 logger.error(f"Invalid RGB state value: {state}")
                 return
-            self._console_mutex.lock()
             if motion_interface.console_module.set_rgb_led(state) == state:
                 logger.info(f"RGB state set to: {state}")
             else:
                 logger.error(f"Failed to set RGB state to: {state}")
         except Exception as e:
             logger.error(f"Error setting RGB state: {e}")
-        finally:
-            self._console_mutex.unlock()
     @pyqtSlot()
     def queryRGBState(self):
         """Fetch and emit RGB state."""
         try:
-            self._console_mutex.lock()
             state = motion_interface.console_module.get_rgb_led()
             state_text = {0: "Off", 1: "IND1", 2: "IND2", 3: "IND3"}.get(state, "Unknown")
 
@@ -1361,13 +1315,9 @@ class MOTIONConnector(QObject):
             self.rgbStateReceived.emit(state, state_text)  # Emit both values
         except Exception as e:
             logger.error(f"Error querying RGB state: {e}")
-        finally:
-            self._console_mutex.unlock()
     @pyqtSlot(result=QVariant)
     def queryTriggerConfig(self):
-        self._console_mutex.lock()
         trigger_setting = motion_interface.console_module.get_trigger_json()
-        self._console_mutex.unlock()
         if trigger_setting:
             if isinstance(trigger_setting, str):
                 updateTrigger = json.loads(trigger_setting)
@@ -1386,7 +1336,6 @@ class MOTIONConnector(QObject):
     @pyqtSlot(str, result=bool)
     def setTrigger(self, triggerjson):  # Lock auto-released at function exit
         try:
-            self._console_mutex.lock()
             json_trigger_data = json.loads(triggerjson)
             
             trigger_setting = motion_interface.console_module.set_trigger_json(data=json_trigger_data)
@@ -1408,14 +1357,10 @@ class MOTIONConnector(QObject):
         except Exception as e:
             logger.error(f"Unexpected error while setting trigger: {e}")
             return False
-        finally:
-            self._console_mutex.unlock()
     
     @pyqtSlot(result=bool)
     def startTrigger(self):
-        self._console_mutex.lock()
         success = motion_interface.console_module.start_trigger()
-        self._console_mutex.unlock()
         if success:
             self._trigger_state = "ON"
             self.triggerStateChanged.emit()
@@ -1424,9 +1369,7 @@ class MOTIONConnector(QObject):
         
     @pyqtSlot()
     def stopTrigger(self):
-        self._console_mutex.lock()
         motion_interface.console_module.stop_trigger()
-        self._console_mutex.unlock()
         self._trigger_state = "OFF"
         self.triggerStateChanged.emit()        
         self._stop_runlog()
@@ -1435,7 +1378,6 @@ class MOTIONConnector(QObject):
     @pyqtSlot(result=int)
     def getFsyncCount(self):
         """Get the Fsync count from the console."""
-        self._console_mutex.lock()
         try:
             fsync_count = motion_interface.console_module.get_fsync_pulsecount()
             logger.info(f"Fsync Count: {fsync_count}")
@@ -1443,13 +1385,10 @@ class MOTIONConnector(QObject):
         except Exception as e:
             logger.error(f"Error getting Fsync count: {e}")
             return -1
-        finally:
-            self._console_mutex.unlock()    
 
     @pyqtSlot(result=int)
     def getLsyncCount(self):
         """Get the Fsync count from the console."""
-        self._console_mutex.lock()
         try:
             lsync_count = motion_interface.console_module.get_lsync_pulsecount()
             logger.debug(f"Lsync Count: {lsync_count}")
@@ -1457,8 +1396,6 @@ class MOTIONConnector(QObject):
         except Exception as e:
             logger.error(f"Error getting Lsync count: {e}")
             return -1
-        finally:
-            self._console_mutex.unlock()
 
     @pyqtSlot(result=bool)
     def setLaserPowerFromConfig(self) -> bool:
@@ -1471,7 +1408,6 @@ class MOTIONConnector(QObject):
          
     def set_laser_power_from_config(self, interface):
         logger.info("[Connector] Setting laser power from config...")
-        self._console_mutex.lock()
         for idx, laser_param in enumerate(self.laser_params, start=1):
             muxIdx = laser_param["muxIdx"]
             channel = laser_param["channel"]
@@ -1494,7 +1430,6 @@ class MOTIONConnector(QObject):
                 logger.error(f"Failed to set laser power (muxIdx={muxIdx}, channel={channel})")
                 return False
         logger.info("Laser power set successfully.")
-        self._console_mutex.unlock()
         return True
     
     # --- SENSOR COMMUNICATION METHODS ---
@@ -1530,12 +1465,7 @@ class MOTIONConnector(QObject):
                 
                 for camera_id in range(8):
                     try:
-                        # Lock the appropriate mutex
-                        mutex_idx = 1 if sensor_name == "right" else 0
-                        self._sensor_mutex[mutex_idx].lock()
-                        
                         uid_bytes = sensor.read_camera_security_uid(camera_id)
-                        self._sensor_mutex[mutex_idx].unlock()
                         
                         # Format UID as hex string
                         uid_hex = ''.join(f'{b:02X}' for b in uid_bytes)
@@ -1553,9 +1483,6 @@ class MOTIONConnector(QObject):
                             # Emit to configLog for UI display during configuration phase
                             self.configLog.emit(f"Camera {camera_id + 1} UID: 0x{uid_hex}")
                     except Exception as e:
-                        mutex_idx = 1 if sensor_name == "right" else 0
-                        if self._sensor_mutex[mutex_idx].tryLock():
-                            self._sensor_mutex[mutex_idx].unlock()
                         logger.error(f"Error reading UID for camera {camera_id + 1} on {sensor_name} sensor: {e}")
                         if self._runlog_active:
                             run_logger.error(f"Error reading UID for camera {camera_id + 1} on {sensor_name} sensor: {e}")
@@ -1571,7 +1498,7 @@ class MOTIONConnector(QObject):
     @pyqtSlot(int, int)
     def startConfigureCameraSensors(self, left_camera_mask:int, right_camera_mask:int):
         if self._config_thread: return
-        w = _ConfigureWorker(self._interface, self._sensor_mutex, left_camera_mask, right_camera_mask)
+        w = _ConfigureWorker(self._interface, left_camera_mask, right_camera_mask)
         w.progress.connect(self.configProgress.emit)
         w.log.connect(self.configLog.emit)
         w.finished.connect(self._on_config_finished)
@@ -1607,9 +1534,7 @@ class MOTIONConnector(QObject):
             if sensor is None:
                 logger.error(f"{sensor_tag.capitalize()} sensor object is None")
                 return
-            self._sensor_mutex[sensor_tag == "right"].lock()    
             accel = sensor.imu_get_accelerometer()
-            self._sensor_mutex[sensor_tag == "right"].unlock()
             logger.info(f"Accel (raw): X={accel[0]}, Y={accel[1]}, Z={accel[2]}")
             self.accelerometerSensorUpdated.emit(accel[0], accel[1], accel[2])
         except Exception as e:
@@ -1625,9 +1550,7 @@ class MOTIONConnector(QObject):
                 logger.error(f"Invalid target for sensor info query: {target}")
                 return
 
-            self._sensor_mutex[sensor_tag=="right"].lock()
             gyro  = motion_interface.sensors[sensor_tag].imu_get_gyroscope()
-            self._sensor_mutex[sensor_tag=="right"].unlock()
             logger.info(f"Gyro  (raw): X={gyro[0]}, Y={gyro[1]}, Z={gyro[2]}")
             self.gyroscopeSensorUpdated.emit(gyro[0], gyro[1], gyro[2])
         except Exception as e:
@@ -1639,23 +1562,18 @@ class MOTIONConnector(QObject):
         try:
             
             if target == "CONSOLE":
-                self._console_mutex.lock()
                 if motion_interface.console_module.soft_reset():
                     logger.info(f"Software Reset Sent")
                 else:
                     logger.error(f"Failed to send Software Reset")
             elif target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":
                 sensor_tag = "left" if target == "SENSOR_LEFT" else "right"                    
-                self._sensor_mutex[sensor_tag=="right"].lock()
                 if motion_interface.sensors[sensor_tag].soft_reset():
                     logger.info(f"Software Reset Sent")
                 else:
                     logger.error(f"Failed to send Software Reset")
         except Exception as e:
             logger.error(f"Error Sending Software Reset: {e}")
-        finally:
-            self._sensor_mutex[sensor_tag=="right"].unlock()
-            self._console_mutex.unlock()
 
     
     @pyqtSlot(str)
@@ -1679,9 +1597,7 @@ class MOTIONConnector(QObject):
                 logger.error(f"{sensor_tag.capitalize()} sensor object is None")
                 return
                 
-            self._sensor_mutex[sensor_tag=="right"].lock()
             imu_temp = sensor.imu_get_temperature()  
-            self._sensor_mutex[sensor_tag=="right"].unlock()
             logger.info(f"Temperature Data - IMU Temp: {imu_temp}")
             self.temperatureSensorUpdated.emit(imu_temp)
         except Exception as e:
@@ -1716,8 +1632,6 @@ class MOTIONConnector(QObject):
             logger.info(f"Sensor Device Info - Firmware: {fw_version}, Device ID: {device_id}")
         except Exception as e:
             logger.error(f"Error querying device info: {e}")
-        finally:
-            self._sensor_mutex[sensor_tag=="right"].unlock()
     # Fan control methods
     @pyqtSlot(str, bool, result=bool)
     def setFanControl(self, sensor_side: str, fan_on: bool) -> bool:
@@ -1736,16 +1650,12 @@ class MOTIONConnector(QObject):
                 if not self._leftSensorConnected:
                     logger.error("Left sensor not connected")
                     return False
-                self._sensor_mutex[0].lock()
                 result = self._interface.sensors["left"].set_fan_control(fan_on)
-                self._sensor_mutex[0].unlock()
             elif sensor_side.lower() == "right":
                 if not self._rightSensorConnected:
                     logger.error("Right sensor not connected")
                     return False
-                self._sensor_mutex[1].lock()
                 result = self._interface.sensors["right"].set_fan_control(fan_on)
-                self._sensor_mutex[1].unlock()
             else:
                 logger.error(f"Invalid sensor side: {sensor_side}")
                 return False
@@ -1777,16 +1687,12 @@ class MOTIONConnector(QObject):
                 if not self._leftSensorConnected:
                     logger.error("Left sensor not connected")
                     return False
-                self._sensor_mutex[0].lock()
                 status = self._interface.sensors["left"].get_fan_control_status()
-                self._sensor_mutex[0].unlock()
             elif sensor_side.lower() == "right":
                 if not self._rightSensorConnected:
                     logger.error("Right sensor not connected")
                     return False
-                self._sensor_mutex[1].lock()
                 status = self._interface.sensors["right"].get_fan_control_status()
-                self._sensor_mutex[1].unlock()
             else:
                 logger.error(f"Invalid sensor side: {sensor_side}")
                 return False
@@ -2156,10 +2062,9 @@ class _ConfigureWorker(QThread):
     progress = pyqtSignal(int)
     log = pyqtSignal(str)
     finished = pyqtSignal(bool, str)
-    def __init__(self, interface, _sensor_mutex, left_camera_mask:int, right_camera_mask:int):
+    def __init__(self, interface, left_camera_mask:int, right_camera_mask:int):
         super().__init__()
         self.interface = interface
-        self._sensor_mutex = _sensor_mutex
         self.left_camera_mask = left_camera_mask
         self.right_camera_mask = right_camera_mask
         self._stop = False
@@ -2195,7 +2100,6 @@ class _ConfigureWorker(QThread):
 
             cam_mask_single = 1 << pos
             pos1 = pos + 1  # human-friendly position
-            self._sensor_mutex[side=="right"].lock()
             # 1) Program FPGA
             msg = f"Programming {side} camera FPGA at position {pos1} (mask 0x{cam_mask_single:02X})…"
             logger.info(msg)
@@ -2230,7 +2134,7 @@ class _ConfigureWorker(QThread):
             if self._stop:
                 self.finished.emit(False, "Canceled")
                 return
-
+            time.sleep(0.1)
             # 2) Configure camera registers
             msg = f"Configuring {side} camera sensor registers at position {pos1}…"
             logger.info(msg)
@@ -2258,8 +2162,6 @@ class _ConfigureWorker(QThread):
 
             done += 1
             self.progress.emit(int(5 + (done / total) * 15))
-
-            self._sensor_mutex[side=="right"].unlock()
 
         logger.info("FPGAs programmed & registers configured")
         self.finished.emit(True, "")

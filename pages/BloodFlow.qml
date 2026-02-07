@@ -271,7 +271,8 @@ Rectangle {
                             Layout.preferredHeight: 40
                             model: sensorPatterns
                             textRole: "name" 
-                            enabled: advancedSensors
+                            enabled: MOTIONInterface.leftSensorConnected
+                            opacity: enabled ? 1.0 : 0.4
 
                             onCurrentIndexChanged: {
                                 switch (currentIndex) {
@@ -317,7 +318,8 @@ Rectangle {
                             Layout.preferredHeight: 40
                             model: sensorPatterns
                             textRole: "name" 
-                            enabled: advancedSensors
+                            enabled: MOTIONInterface.rightSensorConnected
+                            opacity: enabled ? 1.0 : 0.4
 
                             onCurrentIndexChanged: {
                                 switch (currentIndex) {
@@ -517,7 +519,7 @@ Rectangle {
                         Slider {
                             id: durationSlider
                             from: 16
-                            to: advancedSensors ? 43200 : 120
+                            to: 43200
                             stepSize: 1
                             snapMode: Slider.SnapOnRelease
                             value: controlPanel.durationSec
@@ -529,21 +531,21 @@ Rectangle {
                             id: durationEdit
                             text: String(controlPanel.durationSec)
                             inputMethodHints: Qt.ImhDigitsOnly
-                            validator: IntValidator { bottom: 0; top: 120 }
+                            validator: IntValidator { bottom: 0; top: 43200  }
                             font.pixelSize: 14
                             color: "white"
                             horizontalAlignment: Text.AlignHCenter
-                            Layout.preferredWidth: 64
+                            Layout.preferredWidth: 80
                             background: Rectangle {
                                 color: "#2E2E33"; radius: 4
                                 border.color: "#3E4E6F"; border.width: 1
                             }
 
-                            // keep in sync with slider, clamp 0..120
+                            // keep in sync with slider, clamp 0..43200 
                             onEditingFinished: {
                                 let v = parseInt(text);
                                 if (isNaN(v)) v = controlPanel.durationSec;
-                                v = advancedSensors? Math.max(0, Math.min(43200, v)) : Math.max(0, Math.min(120, v));
+                                v = advancedSensors? Math.max(0, Math.min(43200, v)) : Math.max(0, Math.min(43200 , v));
                                 controlPanel.durationSec = v;
                                 durationSlider.value = v;
                                 text = String(v);
@@ -642,26 +644,27 @@ Rectangle {
         }
         
         function onConnectionStatusChanged() {          
-            // Reset ComboBox to "Near" when sensor disconnects
             if (!MOTIONInterface.leftSensorConnected) {
-                leftSensorSelector.currentIndex = 1
+                leftSensorSelector.currentIndex = 0
+                leftSensorView.resetCamerasWhenDisconnected()
+            }
+            else{
+                leftSensorSelector.currentIndex = 4
+                leftSensorView.sensorActive = [true,false,false,true,true,false,false,true];
             }
             if (!MOTIONInterface.rightSensorConnected) {
                 rightSensorSelector.currentIndex = 0
+                rightSensorView.resetCamerasWhenDisconnected()
+            } else{
+                rightSensorSelector.currentIndex = 4
+                rightSensorView.sensorActive = [true,false,false,true,true,false,false,true];
             }
-            if (MOTIONInterface.consoleConnected) {
-                
-            }            
         }
         
         function onLaserStateChanged() {          
-            if (MOTIONInterface.consoleConnected) {
-            }            
         }
         
         function onSafetyFailureStateChanged() {          
-            if (MOTIONInterface.consoleConnected) {
-            }            
         }
 
     }
