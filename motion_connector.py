@@ -245,6 +245,12 @@ class MOTIONConnector(QObject):
             return
         self._enable_sensor_debug_logging(side)
         self.getFanControlStatus(side)
+        try:
+            sensor = self._interface.sensors.get(side) if self._interface and self._interface.sensors else None
+            if sensor is not None and getattr(sensor, "refresh_id_cache", None) is not None:
+                sensor.refresh_id_cache()
+        except Exception as e:
+            logger.debug("Could not refresh sensor ID cache for %s: %s", side, e)
         self.connectionStatusChanged.emit()
 
     def _start_runlog(self, subject_id: str = None):
@@ -629,8 +635,20 @@ class MOTIONConnector(QObject):
         """Handle device disconnection."""
         if descriptor.upper() == "SENSOR_LEFT":
             self._leftSensorConnected = False
+            try:
+                sensor = self._interface.sensors.get("left") if self._interface and self._interface.sensors else None
+                if sensor is not None and getattr(sensor, "clear_id_cache", None) is not None:
+                    sensor.clear_id_cache()
+            except Exception:
+                pass
         elif descriptor.upper() == "SENSOR_RIGHT":
             self._rightSensorConnected = False
+            try:
+                sensor = self._interface.sensors.get("right") if self._interface and self._interface.sensors else None
+                if sensor is not None and getattr(sensor, "clear_id_cache", None) is not None:
+                    sensor.clear_id_cache()
+            except Exception:
+                pass
         elif descriptor.upper() == "CONSOLE":
             self._consoleConnected = False
             # Stop console status thread when console disconnects
@@ -1077,6 +1095,9 @@ class MOTIONConnector(QObject):
         logger.info("Scan image stats per camera:")
         run_logger.info("Scan image stats per camera:")
 
+        # Build rows for CSV export (same data as log output)
+        eol_rows = []
+
         for idx in range(len(per_cam_mean)):
             cam_id = None
             if camera_inds is not None and idx < len(camera_inds):
@@ -1095,22 +1116,59 @@ class MOTIONConnector(QObject):
             else:
                 label = f"camera {cam_id}"
 
+            mean_val = float(per_cam_mean[idx])
+            avg_contrast = float(per_cam_contrast[idx]) if per_cam_contrast is not None else None
+
             if per_cam_contrast is None:
-                logger.info("  %s mean: %.0f", label, float(per_cam_mean[idx]))
-                run_logger.info("  %s mean: %.0f", label, float(per_cam_mean[idx]))
+                logger.info("  %s mean: %.0f", label, mean_val)
+                run_logger.info("  %s mean: %.0f", label, mean_val)
             else:
                 logger.info(
                     "  %s mean: %.0f, avg contrast: %.3f",
                     label,
-                    float(per_cam_mean[idx]),
-                    float(per_cam_contrast[idx]),
+                    mean_val,
+                    avg_contrast,
                 )
-                run_logger.info(
-                    "  %s mean: %.0f, avg contrast: %.3f",
-                    label,
-                    float(per_cam_mean[idx]),
-                    float(per_cam_contrast[idx]),
+
+            # Get cached security UID and HWID from SDK (sensor retains these)
+            side_key = (side or "").lower()
+            cid = int(cam_id) if cam_id is not None and cam_id != "" else -1
+            sensor = self._interface.sensors.get(side_key) if self._interface and self._interface.sensors else None
+            if sensor is not None and hasattr(sensor, "get_cached_camera_security_uid") and hasattr(sensor, "get_cached_hardware_id"):
+                security_id = sensor.get_cached_camera_security_uid(cid) if cid >= 0 else ""
+                hwid = sensor.get_cached_hardware_id()
+            else:
+                security_id = ""
+                hwid = ""
+
+            eol_rows.append({
+                "camera_index": idx,
+                "side": side or "",
+                "cam_id": cam_id if cam_id is not None else "",
+                "mean": mean_val,
+                "avg_contrast": avg_contrast if avg_contrast is not None else "",
+                "security_id": security_id or "",
+                "hwid": hwid or "",
+            })
+
+        # Write CSV to app-logs/eol-test-csvs
+        try:
+            eol_dir = os.path.join(os.getcwd(), "app-logs", "eol-test-csvs")
+            os.makedirs(eol_dir, exist_ok=True)
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            eol_path = os.path.join(eol_dir, f"eol-test-{ts}.csv")
+            with open(eol_path, "w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(
+                    f,
+                    fieldnames=["camera_index", "side", "cam_id", "mean", "avg_contrast", "security_id", "hwid"],
                 )
+                w.writeheader()
+                w.writerows(eol_rows)
+            logger.info(f"Scan image stats CSV written to {eol_path}")
+            run_logger.info(f"Scan image stats CSV written to {eol_path}")
+        except Exception as e:
+            logger.warning(f"Failed to write EOL test CSV: {e}")
+            run_logger.warning(f"Failed to write EOL test CSV: {e}")
 
     @pyqtSlot()
     def stopCapture(self):
