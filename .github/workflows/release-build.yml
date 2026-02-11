@@ -66,9 +66,8 @@ jobs:
         run: |
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
-            # Strip leading 'v' or 'pre-' for the version number
+            # Strip leading 'v' only; keep 'pre-' for pre-release versions
             VER="${TAG#v}"
-            VER="${VER#pre-}"
           else
             VER=$(git describe --tags --dirty --always --long 2>/dev/null || echo "dev-${GITHUB_SHA::8}")
           fi

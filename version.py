@@ -60,10 +60,8 @@ def get_version() -> str:
         tag, distance, commit = parts[-3], parts[-2], parts[-1]
         # re-join if tag itself contained dashes (e.g. "pre-0.4.3")
         tag = raw[: raw.rfind(f"-{distance}-{commit}")]
-        # strip leading v / pre- for version number
+        # strip leading 'v' only; keep 'pre-' prefix for pre-release tags
         base = tag.lstrip("v")
-        if base.startswith("pre-"):
-            base = base[len("pre-"):]
 
         if distance == "0":
             # Exactly on the tag
