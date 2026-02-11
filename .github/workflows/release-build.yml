@@ -93,7 +93,8 @@ jobs:
             TAG=$(git describe --tags --dirty --always 2>/dev/null || echo "dev-${GITHUB_SHA::8}")
           fi
           echo "TAG=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "ARTIFACT=OpenMotion-Bloodflow-${TAG}.zip" >> "$GITHUB_OUTPUT"
+          echo "ARTIFACT_NAME=OpenMotion-Bloodflow-${TAG}" >> "$GITHUB_OUTPUT"
+          echo "ARTIFACT_ZIP=OpenMotion-Bloodflow-${TAG}.zip" >> "$GITHUB_OUTPUT"
 
           # pre-release flag
           if [[ "$TAG" == pre-* ]]; then
@@ -107,14 +108,14 @@ jobs:
       - name: Zip build output
         shell: pwsh
         run: |
-          Compress-Archive -Path dist\* -DestinationPath "${{ steps.meta.outputs.ARTIFACT }}"
+          Compress-Archive -Path dist\* -DestinationPath "${{ steps.meta.outputs.ARTIFACT_ZIP }}"
 
       # ── always upload workflow artifact ──────────────────────────
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.meta.outputs.ARTIFACT }}
-          path: dist\
+          name: ${{ steps.meta.outputs.ARTIFACT_NAME }}
+          path: ${{ steps.meta.outputs.ARTIFACT_ZIP }}
 
       # ── build release notes ───────────────────────────────────────
       - name: Build release notes
@@ -153,6 +154,6 @@ jobs:
           name: ${{ steps.meta.outputs.TAG }}
           body_path: notes.md
           prerelease: ${{ steps.meta.outputs.PRERELEASE == 'true' }}
-          files: ${{ steps.meta.outputs.ARTIFACT }}
+          files: ${{ steps.meta.outputs.ARTIFACT_ZIP }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
