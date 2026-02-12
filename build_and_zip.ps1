@@ -50,14 +50,31 @@ if (-not (Test-Path $SpecFile)) {
 }
 
 Write-Host "=== Building with PyInstaller ===" -ForegroundColor Cyan
+
+# Determine version from git tags
+try {
+    $GitVersion = (git describe --tags --dirty --always --long 2>$null).Trim()
+    if (-not $GitVersion) { throw "empty" }
+} catch {
+    $GitVersion = "dev-$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+}
+Write-Host "Version: $GitVersion" -ForegroundColor Yellow
+
+# Stamp _FALLBACK_VERSION in version.py so the frozen exe uses the right version
+$versionFile = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Definition) "version.py"
+if (Test-Path $versionFile) {
+    (Get-Content $versionFile) -replace '^_FALLBACK_VERSION = .*', "_FALLBACK_VERSION = `"$GitVersion`"" |
+        Set-Content $versionFile -Encoding UTF8
+    Write-Host "Stamped version.py with $GitVersion" -ForegroundColor Green
+}
+
 Invoke-Py @("-m","PyInstaller","-y",$SpecFile)
 
 if (-not (Test-Path "dist\$AppName")) {
     throw "Build failed: dist\$AppName not found. Check your spec name and exe name."
 }
 
-$Version = Get-Date -Format "yyyyMMdd_HHmmss"
-$ZipName = "$AppName-$Version.zip"
+$ZipName = "$AppName-$GitVersion.zip"
 
 Write-Host "=== Creating zip: $ZipName ===" -ForegroundColor Cyan
 Compress-Archive -Path "dist\$AppName\*" -DestinationPath $ZipName -Force

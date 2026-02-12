@@ -35,8 +35,8 @@ ApplicationWindow {
             // Set title and logo dynamically
             titleText: "Open-MOTION BloodFlow"
             logoSource: "../assets/images/OpenwaterLogo.png" // Correct relative path
-            appVerText: "v" + appVersion
-            sdkVerText: "v" + MOTIONInterface.get_sdk_version()
+            appVerText: "" + appVersion
+            sdkVerText: "" + MOTIONInterface.get_sdk_version()
         }
 
         // Layout for Sidebar and Main Content
