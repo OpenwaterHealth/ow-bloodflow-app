@@ -2,13 +2,14 @@ import sys
 import os
 import asyncio
 import argparse
+import json
 import warnings
 import logging
 import datetime
+from pathlib import Path
 
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QApplication   
-from PyQt6.QtWidgets import QApplication   
+from PyQt6.QtWidgets import QApplication
 from PyQt6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
 from PyQt6.QtCore import qInstallMessageHandler, QtMsgType
 from qasync import QEventLoop
@@ -16,6 +17,7 @@ from qasync import QEventLoop
 from motion_connector import MOTIONConnector
 from pathlib import Path
 from version import get_version
+from utils.resource_path import resource_path
 
 
 APP_VERSION = get_version()
@@ -48,10 +50,33 @@ def qt_message_handler(msg_type, context, message):
     logger.setLevel(logging.INFO)  # or INFO depending on what you want to see
     logger.info(qml_message)
 
+def _load_app_config() -> dict:
+    """Load application config from config/app_config.json. Returns defaults if missing or invalid."""
+    defaults = {
+        "realtimePlotEnabled": False,
+        "advancedSensors": True,
+    }
+    config_path = resource_path("config", "app_config.json")
+    if not config_path.exists():
+        logger.info("No app_config.json found at %s, using defaults", config_path)
+        return defaults
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        out = {**defaults, **{k: v for k, v in loaded.items() if k in defaults}}
+        logger.info("Loaded app config from %s: realtimePlotEnabled=%s, advancedSensors=%s",
+                    config_path, out.get("realtimePlotEnabled"), out.get("advancedSensors"))
+        return out
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Could not load app config from %s: %s; using defaults", config_path, e)
+        return defaults
+
+
 def resource_path(rel: str) -> str:
     import sys, os
     base = getattr(sys, "_MEIPASS", os.path.abspath(os.path.dirname(sys.executable if getattr(sys,"frozen",False) else __file__)))
     return os.path.join(base, rel)
+
 
 def main():
     os.environ["QT_QUICK_CONTROLS_STYLE"] = "Material"
@@ -114,12 +139,16 @@ def main():
     
     engine = QQmlApplicationEngine()
 
-    # Expose to QML
-    connector = MOTIONConnector(advanced_sensors=True)
+    # Load application config (realtime plot, etc.) and allow CLI overrides
+    app_config = _load_app_config()
+    if my_args.advanced_sensors:
+        app_config["advancedSensors"] = True
+
+    connector = MOTIONConnector(advanced_sensors=app_config.get("advancedSensors", True))
     qmlRegisterSingletonInstance("OpenMotion", 1, 0, "MOTIONInterface", connector)
     engine.rootContext().setContextProperty("AppFlags", {
-        "advancedSensors": True,
-        "realtimePlotEnabled": False
+        "advancedSensors": app_config.get("advancedSensors", True),
+        "realtimePlotEnabled": app_config.get("realtimePlotEnabled", False),
     })
     engine.rootContext().setContextProperty("appVersion", APP_VERSION)
 
