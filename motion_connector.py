@@ -127,6 +127,9 @@ class MOTIONConnector(QObject):
         self.laser_params = self._load_laser_params(config_dir)
         self._tec_voltage_default = self._load_tec_params(config_dir)
 
+        self._eol_min_mean_per_camera = None  # list of 8 or None; set via set_eol_thresholds()
+        self._eol_min_contrast_per_camera = None
+
         self._post_thread = None
         self._post_cancel = threading.Event()
 
@@ -194,6 +197,14 @@ class MOTIONConnector(QObject):
             self._console_status_thread.statusUpdate.connect(self.handleUpdateCapStatus)
             self._console_status_thread.start()
 
+    def set_eol_thresholds(
+        self,
+        min_mean_per_camera=None,
+        min_contrast_per_camera=None,
+    ):
+        """Set EOL test thresholds per camera (index 0-7). None or list of up to 8 numbers."""
+        self._eol_min_mean_per_camera = min_mean_per_camera if isinstance(min_mean_per_camera, (list, tuple)) else None
+        self._eol_min_contrast_per_camera = min_contrast_per_camera if isinstance(min_contrast_per_camera, (list, tuple)) else None
 
     def _configure_logging(self, log_level):
 
@@ -1141,12 +1152,36 @@ class MOTIONConnector(QObject):
                 security_id = ""
                 hwid = ""
 
+            # EOL thresholds: use cam_id (0-7) to index per-camera minimums
+            cam_idx = cid if cid >= 0 else idx
+            min_mean = None
+            min_contrast = None
+            if self._eol_min_mean_per_camera and cam_idx < len(self._eol_min_mean_per_camera):
+                min_mean = self._eol_min_mean_per_camera[cam_idx]
+            if self._eol_min_contrast_per_camera and cam_idx < len(self._eol_min_contrast_per_camera):
+                min_contrast = self._eol_min_contrast_per_camera[cam_idx]
+
+            if min_mean is not None and not isinstance(min_mean, (int, float)):
+                min_mean = None
+            if min_contrast is not None and not isinstance(min_contrast, (int, float)):
+                min_contrast = None
+
+            mean_test = "PASS" if (min_mean is None or mean_val >= min_mean) else "FAIL"
+            if min_contrast is None:
+                contrast_test = "PASS"
+            elif avg_contrast is None:
+                contrast_test = "FAIL"
+            else:
+                contrast_test = "PASS" if avg_contrast >= min_contrast else "FAIL"
+
             eol_rows.append({
                 "camera_index": idx,
                 "side": side or "",
                 "cam_id": cam_id if cam_id is not None else "",
                 "mean": mean_val,
                 "avg_contrast": avg_contrast if avg_contrast is not None else "",
+                "mean_test": mean_test,
+                "contrast_test": contrast_test,
                 "security_id": security_id or "",
                 "hwid": hwid or "",
             })
@@ -1160,7 +1195,7 @@ class MOTIONConnector(QObject):
             with open(eol_path, "w", newline="", encoding="utf-8") as f:
                 w = csv.DictWriter(
                     f,
-                    fieldnames=["camera_index", "side", "cam_id", "mean", "avg_contrast", "security_id", "hwid"],
+                    fieldnames=["camera_index", "side", "cam_id", "mean", "avg_contrast", "mean_test", "contrast_test", "security_id", "hwid"],
                 )
                 w.writeheader()
                 w.writerows(eol_rows)
@@ -1313,16 +1348,16 @@ class MOTIONConnector(QObject):
             status_text = f"SE: 0x{statuses['SE']:02X}, SO: 0x{statuses['SO']:02X}"
             if (statuses["SE"] & 0x0F) == 0 and (statuses["SO"] & 0x0F) == 0:
                 if self._safetyFailure:
-                    self.safetyFailure(False)
+                    self.safetyFailure = False
             else:
                 if not self._safetyFailure:
-                    self.safetyFailure(True)
+                    self.safetyFailure = True
                     self.stopTrigger()
                     self.laserStateChanged.emit(False)
 
         except Exception as e:
             logger.error(f"readSafetyStatus status query failed: {e}")
-            self.safetyFailure(True)
+            self.safetyFailure = True
 
     @pyqtSlot(str, int, int, int, int, int, result=QVariant)
     def i2cReadBytes(self, target: str, mux_idx: int, channel: int, i2c_addr: int, offset: int, data_len: int):

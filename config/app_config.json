@@ -1,4 +1,6 @@
 {
   "realtimePlotEnabled": false,
-  "advancedSensors": true
+  "advancedSensors": true,
+  "eol_min_mean_per_camera": [0, 0, 0, 0, 0, 0, 0, 0],
+  "eol_min_contrast_per_camera": [0, 0, 0, 0, 0, 0, 0, 0]
 }

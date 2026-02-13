@@ -55,6 +55,8 @@ def _load_app_config() -> dict:
     defaults = {
         "realtimePlotEnabled": False,
         "advancedSensors": True,
+        "eol_min_mean_per_camera": [0] * 8,
+        "eol_min_contrast_per_camera": [0] * 8,
     }
     config_path = resource_path("config", "app_config.json")
     if not config_path.exists():
@@ -70,12 +72,6 @@ def _load_app_config() -> dict:
     except (json.JSONDecodeError, OSError) as e:
         logger.warning("Could not load app config from %s: %s; using defaults", config_path, e)
         return defaults
-
-
-def resource_path(rel: str) -> str:
-    import sys, os
-    base = getattr(sys, "_MEIPASS", os.path.abspath(os.path.dirname(sys.executable if getattr(sys,"frozen",False) else __file__)))
-    return os.path.join(base, rel)
 
 
 def main():
@@ -129,7 +125,7 @@ def main():
         except Exception:
             pass  # Ignore if not available
     
-    icon_path = resource_path("assets/images/favicon.ico")
+    icon_path = str(resource_path("assets", "images", "favicon.ico"))
     app.setWindowIcon(QIcon(icon_path))
     
     # Set application properties for Windows taskbar
@@ -145,6 +141,10 @@ def main():
         app_config["advancedSensors"] = True
 
     connector = MOTIONConnector(advanced_sensors=app_config.get("advancedSensors", True))
+    connector.set_eol_thresholds(
+        app_config.get("eol_min_mean_per_camera"),
+        app_config.get("eol_min_contrast_per_camera"),
+    )
     qmlRegisterSingletonInstance("OpenMotion", 1, 0, "MOTIONInterface", connector)
     engine.rootContext().setContextProperty("AppFlags", {
         "advancedSensors": app_config.get("advancedSensors", True),
@@ -153,7 +153,7 @@ def main():
     engine.rootContext().setContextProperty("appVersion", APP_VERSION)
 
     # Load the QML file
-    engine.load(resource_path("main.qml"))
+    engine.load(str(resource_path("main.qml")))
 
     if not engine.rootObjects():
         logger.error("Error: Failed to load QML file")
