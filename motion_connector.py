@@ -63,6 +63,7 @@ class MOTIONConnector(QObject):
     stateChanged = pyqtSignal()  # Signal to notify QML of state changes
     laserStateChanged = pyqtSignal()  # Signal to notify QML of laser state changes
     safetyFailureStateChanged = pyqtSignal()  # Signal to notify QML of safety
+    safetyTripDuringCaptureRequested = pyqtSignal()  # Emitted when safety trips while scan running (main-thread slot shows message & schedules cancel)
     triggerStateChanged = pyqtSignal()  # Signal to notify QML of trigger state changes
     directoryChanged = pyqtSignal()  # Signal to notify QML of directory changes
     subjectIdChanged = pyqtSignal()  # Signal to notify QML of subject ID changes
@@ -133,6 +134,7 @@ class MOTIONConnector(QObject):
         self._capture_thread = None
         self._capture_stop = threading.Event()
         self._capture_running = False
+        self._safety_cancel_scheduled = False  # True after scheduling cancel-due-to-safety; cleared when capture ends
         self._capture_left_path = ""
         self._capture_right_path = ""
         self._scan_notes = ""  
@@ -846,6 +848,10 @@ class MOTIONConnector(QObject):
             self.captureLog.emit("Capture already running.")
             return False
 
+        if self._safetyFailure:
+            self.captureLog.emit("Scan cannot start: laser safety system is tripped. Clear the safety interlock first.")
+            return False
+
         # sanitize/prepare
         try:
             os.makedirs(data_dir, exist_ok=True)
@@ -1036,6 +1042,7 @@ class MOTIONConnector(QObject):
                 ok = False
             finally:
                 self._capture_running = False
+                self._safety_cancel_scheduled = False
                 self._capture_thread = None
                 self.captureFinished.emit(ok, err, left_path, right_path)
                 self._stop_runlog()
@@ -1111,6 +1118,14 @@ class MOTIONConnector(QObject):
                     float(per_cam_mean[idx]),
                     float(per_cam_contrast[idx]),
                 )
+
+    def _on_safety_trip_during_capture(self):
+        """Called on main thread when safety tripped while scan was running: show message and cancel scan in 5 s."""
+        if not self._capture_running or self._safety_cancel_scheduled:
+            return
+        self._safety_cancel_scheduled = True
+        self.captureLog.emit("Laser safety system tripped. Scan will be cancelled in 5 seconds.")
+        QTimer.singleShot(5000, self.stopCapture)
 
     @pyqtSlot()
     def stopCapture(self):
@@ -1255,16 +1270,20 @@ class MOTIONConnector(QObject):
             status_text = f"SE: 0x{statuses['SE']:02X}, SO: 0x{statuses['SO']:02X}"
             if (statuses["SE"] & 0x0F) == 0 and (statuses["SO"] & 0x0F) == 0:
                 if self._safetyFailure:
-                    self.safetyFailure(False)
+                    self.safetyFailure = False
             else:
                 if not self._safetyFailure:
-                    self.safetyFailure(True)
+                    self.safetyFailure = True
                     self.stopTrigger()
                     self.laserStateChanged.emit(False)
+                    if self._capture_running and not self._safety_cancel_scheduled:
+                        self.safetyTripDuringCaptureRequested.emit()
 
         except Exception as e:
             logger.error(f"readSafetyStatus status query failed: {e}")
-            self.safetyFailure(True)
+            self.safetyFailure = True
+            if self._capture_running and not self._safety_cancel_scheduled:
+                self.safetyTripDuringCaptureRequested.emit()
 
     @pyqtSlot(str, int, int, int, int, int, result=QVariant)
     def i2cReadBytes(self, target: str, mux_idx: int, channel: int, i2c_addr: int, offset: int, data_len: int):
@@ -1970,6 +1989,7 @@ class MOTIONConnector(QObject):
         motion_interface.signal_connect.connect(self.on_connected)
         motion_interface.signal_disconnect.connect(self.on_disconnected)
         motion_interface.signal_data_received.connect(self.on_data_received)
+        self.safetyTripDuringCaptureRequested.connect(self._on_safety_trip_during_capture)
 
     def _correction_worker(self):
         per_camera_state = {}
