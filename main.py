@@ -15,9 +15,10 @@ from qasync import QEventLoop
 from motion_connector import MOTIONConnector
 from pathlib import Path
 from utils.single_instance import check_single_instance, cleanup_single_instance
+from version import get_version
 
 
-APP_VERSION = "0.4.3"
+APP_VERSION = get_version()
 
 
 logger = logging.getLogger("openmotion.bloodflow-app")
