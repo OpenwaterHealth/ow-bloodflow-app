@@ -9,13 +9,14 @@ import datetime
 from pathlib import Path
 
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
 from PyQt6.QtCore import qInstallMessageHandler, QtMsgType
 from qasync import QEventLoop
 
 from motion_connector import MOTIONConnector
 from pathlib import Path
+from utils.single_instance import check_single_instance, cleanup_single_instance
 from version import get_version
 from utils.resource_path import resource_path
 
@@ -75,6 +76,19 @@ def _load_app_config() -> dict:
 
 
 def main():
+    # Check if another instance is already running
+    if not check_single_instance():
+        # Create a minimal QApplication to show message box
+        app = QApplication(sys.argv)
+        msg_box = QMessageBox()
+        msg_box.setIcon(QMessageBox.Icon.Warning)
+        msg_box.setWindowTitle("OpenWater Bloodflow")
+        msg_box.setText("Another instance of the application is already running.")
+        msg_box.setInformativeText("Please close the existing instance before opening a new one.")
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg_box.exec()
+        sys.exit(1)
+    
     os.environ["QT_QUICK_CONTROLS_STYLE"] = "Material"
     os.environ["QT_QUICK_CONTROLS_MATERIAL_THEME"] = "Dark"
     os.environ["QT_LOGGING_RULES"] = "qt.qpa.fonts=false"
@@ -183,6 +197,7 @@ def main():
         logger.info("Application closing...")
         asyncio.ensure_future(shutdown()).add_done_callback(lambda _: loop.stop())
         engine.deleteLater()  # Ensure QML engine is destroyed
+        cleanup_single_instance()  # Clean up single-instance lock
 
     app.aboutToQuit.connect(handle_exit)
 
