@@ -2,9 +2,11 @@ import sys
 import os
 import asyncio
 import argparse
+import json
 import warnings
 import logging
 import datetime
+from pathlib import Path
 
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QMessageBox
@@ -16,6 +18,7 @@ from motion_connector import MOTIONConnector
 from pathlib import Path
 from utils.single_instance import check_single_instance, cleanup_single_instance
 from version import get_version
+from utils.resource_path import resource_path
 
 
 APP_VERSION = get_version()
@@ -48,10 +51,29 @@ def qt_message_handler(msg_type, context, message):
     logger.setLevel(logging.INFO)  # or INFO depending on what you want to see
     logger.info(qml_message)
 
-def resource_path(rel: str) -> str:
-    import sys, os
-    base = getattr(sys, "_MEIPASS", os.path.abspath(os.path.dirname(sys.executable if getattr(sys,"frozen",False) else __file__)))
-    return os.path.join(base, rel)
+def _load_app_config() -> dict:
+    """Load application config from config/app_config.json. Returns defaults if missing or invalid."""
+    defaults = {
+        "realtimePlotEnabled": False,
+        "advancedSensors": True,
+        "eol_min_mean_per_camera": [0] * 8,
+        "eol_min_contrast_per_camera": [0] * 8,
+    }
+    config_path = resource_path("config", "app_config.json")
+    if not config_path.exists():
+        logger.info("No app_config.json found at %s, using defaults", config_path)
+        return defaults
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        out = {**defaults, **{k: v for k, v in loaded.items() if k in defaults}}
+        logger.info("Loaded app config from %s: realtimePlotEnabled=%s, advancedSensors=%s",
+                    config_path, out.get("realtimePlotEnabled"), out.get("advancedSensors"))
+        return out
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Could not load app config from %s: %s; using defaults", config_path, e)
+        return defaults
+
 
 def main():
     # Check if another instance is already running
@@ -117,7 +139,7 @@ def main():
         except Exception:
             pass  # Ignore if not available
     
-    icon_path = resource_path("assets/images/favicon.ico")
+    icon_path = str(resource_path("assets", "images", "favicon.ico"))
     app.setWindowIcon(QIcon(icon_path))
     
     # Set application properties for Windows taskbar
@@ -127,17 +149,25 @@ def main():
     
     engine = QQmlApplicationEngine()
 
-    # Expose to QML
-    connector = MOTIONConnector(advanced_sensors=True)
+    # Load application config (realtime plot, etc.) and allow CLI overrides
+    app_config = _load_app_config()
+    if my_args.advanced_sensors:
+        app_config["advancedSensors"] = True
+
+    connector = MOTIONConnector(advanced_sensors=app_config.get("advancedSensors", True))
+    connector.set_eol_thresholds(
+        app_config.get("eol_min_mean_per_camera"),
+        app_config.get("eol_min_contrast_per_camera"),
+    )
     qmlRegisterSingletonInstance("OpenMotion", 1, 0, "MOTIONInterface", connector)
     engine.rootContext().setContextProperty("AppFlags", {
-        "advancedSensors": True,
-        "realtimePlotEnabled": False
+        "advancedSensors": app_config.get("advancedSensors", True),
+        "realtimePlotEnabled": app_config.get("realtimePlotEnabled", False),
     })
     engine.rootContext().setContextProperty("appVersion", APP_VERSION)
 
     # Load the QML file
-    engine.load(resource_path("main.qml"))
+    engine.load(str(resource_path("main.qml")))
 
     if not engine.rootObjects():
         logger.error("Error: Failed to load QML file")
