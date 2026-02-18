@@ -87,6 +87,7 @@ class MOTIONConnector(QObject):
     captureFinished = pyqtSignal(bool, str, str, str)       # ok, error, leftPath, rightPath
     scanNotesChanged = pyqtSignal()
     scanMeanSampled = pyqtSignal(str, int, float, float)  # side, cam_id, timestamp_s, mean
+    scanContrastSampled = pyqtSignal(str, int, float, float)  # side, cam_id, timestamp_s, contrast
     scanBfiSampled = pyqtSignal(str, int, float, float)   # side, cam_id, timestamp_s, bfi
     scanBviSampled = pyqtSignal(str, int, float, float)   # side, cam_id, timestamp_s, bvi
     scanBfiCorrectedSampled = pyqtSignal(str, int, float, float)  # side, cam_id, timestamp_s, bfi
@@ -946,7 +947,7 @@ class MOTIONConnector(QObject):
                             err = f"Failed to enable external frame sync on {side}."
                             self.captureLog.emit(err)
                             raise RuntimeError(err)
-
+                time.sleep(.1)
                 # Enable cameras per side with that side's mask
                 logger.info("Enabling cameras…")
                 self.captureLog.emit("Enabling cameras…")
@@ -2061,6 +2062,7 @@ class MOTIONConnector(QObject):
                             bvi_val = (1.0 - ((mean_val - imin) / iden)) * 10.0
                         timestamp = float(ts_val) if ts_val else time.time()
                         self.scanMeanSampled.emit(side, int(cam_id), float(timestamp), mean_val)
+                        self.scanContrastSampled.emit(side, int(cam_id), float(timestamp), float(contrast))
                         self.scanBfiSampled.emit(side, int(cam_id), float(timestamp), float(bfi_val))
                         self.scanBviSampled.emit(side, int(cam_id), float(timestamp), float(bvi_val))
                         self._corr_queue.put((side, int(cam_id), float(timestamp), mean_val, float(bfi_val), float(bvi_val)))

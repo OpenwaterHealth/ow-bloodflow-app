@@ -1,5 +1,5 @@
 {
-    "realtimePlotEnabled":true,
+    "realtimePlotEnabled":false,
     "advancedSensors":true,
     "forceLaserFail":false,
     "eol_min_mean_per_camera":[130,230,250,280,280,250,230,130],
