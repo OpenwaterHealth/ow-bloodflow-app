@@ -158,6 +158,7 @@ def main():
     connector = MOTIONConnector(
         advanced_sensors=app_config.get("advancedSensors", True),
         force_laser_fail=app_config.get("forceLaserFail", False),
+        camera_temp_alert_threshold_c=app_config.get("cameraTempAlertThresholdC", 105),
     )
     connector.set_eol_thresholds(
         app_config.get("eol_min_mean_per_camera"),

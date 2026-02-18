@@ -103,11 +103,12 @@ class MOTIONConnector(QObject):
     tecStatusChanged = pyqtSignal()
     tecDacChanged = pyqtSignal()
 
-    def __init__(self, config_dir="config", parent=None, advanced_sensors=False, log_level=logging.INFO, force_laser_fail=False):
+    def __init__(self, config_dir="config", parent=None, advanced_sensors=False, log_level=logging.INFO, force_laser_fail=False, camera_temp_alert_threshold_c=105.0):
         super().__init__(parent)
         self._interface = motion_interface
         self._advanced_sensors = advanced_sensors
         self._force_laser_fail = force_laser_fail
+        self._camera_temp_alert_threshold_c = float(camera_temp_alert_threshold_c)
 
         # Configure logging with the provided level
         self._configure_logging(log_level)
@@ -2030,8 +2031,17 @@ class MOTIONConnector(QObject):
                 def _extra_cols():
                     with self._telemetry_lock:
                         return [int(self._tcm), int(self._tcl), f"{float(self._pdc):.3f}"]
-                def _on_row(cam_id, frame_id, ts_val, hist, row_sum):
+                _temp_alerted = set()  # cam_ids that have already triggered 105°C alert this scan
+                def _on_row(cam_id, frame_id, ts_val, hist, row_sum, temp):
                     try:
+                        # Alert (and log) if camera temperature reaches threshold; do not interrupt scan
+                        threshold = self._camera_temp_alert_threshold_c
+                        if temp >= threshold and cam_id not in _temp_alerted:
+                            _temp_alerted.add(cam_id)
+                            msg = f"ALERT: Camera {cam_id+1} ({side}) temperature {temp:.1f}°C >= {threshold:.0f}°C threshold."
+                            self.captureLog.emit(msg)
+                            run_logger.warning(msg)
+                            logger.warning(msg)
                         if row_sum > 0:
                             mean_val = float(np.dot(hist, HISTO_BINS) / row_sum)
                         else:
