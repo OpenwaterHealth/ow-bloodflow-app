@@ -1,7 +1,11 @@
 {
-    "realtimePlotEnabled":false,
-    "advancedSensors":true,
-    "forceLaserFail":false,
-    "eol_min_mean_per_camera":[130,230,250,280,280,250,230,130],
-    "eol_min_contrast_per_camera":[0.25,0.25,0.25,0.25,0.25,0.25,0.25,0.25]
+  "realtimePlotEnabled": false,
+  "advancedSensors": true,
+  "forceLaserFail":false,
+  "eol_min_mean_per_camera": [130, 230, 250, 280, 280, 250, 230, 130],
+  "eol_min_contrast_per_camera": [0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25],
+  "beagleUsbLoggingEnabled": true,
+  "datacenterHost": "localhost",
+  "datacenterPort": 6000,
+  "datacenterPath": "C:\\Users\\ethan\\Downloads\\data-center-windows-x86_64-v8.00\\data-center-windows-x86_64-v8.00\\bin"
 }

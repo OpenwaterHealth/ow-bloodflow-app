@@ -16,6 +16,10 @@ from qasync import QEventLoop
 
 from motion_connector import MOTIONConnector
 from pathlib import Path
+try:
+    from omotion import try_start_beagle_usb_logging
+except ImportError:
+    try_start_beagle_usb_logging = None  # Older pylib without Beagle support
 from utils.single_instance import check_single_instance, cleanup_single_instance
 from version import get_version
 from utils.resource_path import resource_path
@@ -54,11 +58,15 @@ def qt_message_handler(msg_type, context, message):
 def _load_app_config() -> dict:
     """Load application config from config/app_config.json. Returns defaults if missing or invalid."""
     defaults = {
-        "realtimePlotEnabled": False,
+        "realtimePlotEnabled": True,
         "advancedSensors": True,
         "forceLaserFail": False,
         "eol_min_mean_per_camera": [0] * 8,
         "eol_min_contrast_per_camera": [0] * 8,
+        "beagleUsbLoggingEnabled": True,
+        "datacenterHost": "localhost",
+        "datacenterPort": 6000,
+        "datacenterPath": "",
     }
     config_path = resource_path("config", "app_config.json")
     if not config_path.exists():
@@ -68,8 +76,9 @@ def _load_app_config() -> dict:
         with open(config_path, "r", encoding="utf-8") as f:
             loaded = json.load(f)
         out = {**defaults, **{k: v for k, v in loaded.items() if k in defaults}}
-        logger.info("Loaded app config from %s: realtimePlotEnabled=%s, advancedSensors=%s",
-                    config_path, out.get("realtimePlotEnabled"), out.get("advancedSensors"))
+        logger.info("Loaded app config from %s: realtimePlotEnabled=%s, advancedSensors=%s, beagleUsbLoggingEnabled=%s",
+                    config_path, out.get("realtimePlotEnabled"), out.get("advancedSensors"),
+                    out.get("beagleUsbLoggingEnabled"))
         return out
     except (json.JSONDecodeError, OSError) as e:
         logger.warning("Could not load app config from %s: %s; using defaults", config_path, e)
@@ -120,6 +129,28 @@ def main():
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
     logger.info(f"logging to {logfile_path}")
+
+    # Configure omotion logger (beagle_usb_logger etc.) to use same handlers
+    omotion_logger = logging.getLogger("omotion")
+    omotion_logger.setLevel(logging.INFO)
+    omotion_logger.addHandler(console_handler)
+    omotion_logger.addHandler(file_handler)
+    omotion_logger.propagate = False
+
+    # Load app config (used for Beagle logging and connector setup below)
+    app_config = _load_app_config()
+    if my_args.advanced_sensors:
+        app_config["advancedSensors"] = True
+
+    # Kick off Beagle USB analyzer logging if enabled (same dir/ts as app log)
+    _beagle_stop = None
+    if try_start_beagle_usb_logging and app_config.get("beagleUsbLoggingEnabled"):
+        _beagle_stop = try_start_beagle_usb_logging(
+            run_dir, ts,
+            host=app_config.get("datacenterHost", "localhost"),
+            port=int(app_config.get("datacenterPort", 6000)),
+            datacenter_path=app_config.get("datacenterPath") or None,
+        )
     
     # Configure the SDK logger hierarchy to use the same handlers
     sdk_logger = logging.getLogger("openmotion.sdk")
@@ -199,6 +230,8 @@ def main():
 
     def handle_exit():
         logger.info("Application closing...")
+        if _beagle_stop:
+            _beagle_stop()
         asyncio.ensure_future(shutdown()).add_done_callback(lambda _: loop.stop())
         engine.deleteLater()  # Ensure QML engine is destroyed
         cleanup_single_instance()  # Clean up single-instance lock
