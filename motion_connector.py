@@ -102,11 +102,12 @@ class MOTIONConnector(QObject):
     tecStatusChanged = pyqtSignal()
     tecDacChanged = pyqtSignal()
 
-    def __init__(self, config_dir="config", parent=None, advanced_sensors=False, log_level=logging.INFO):
+    def __init__(self, config_dir="config", parent=None, advanced_sensors=False, log_level=logging.INFO, force_laser_fail=False):
         super().__init__(parent)
         self._interface = motion_interface
         self._advanced_sensors = advanced_sensors
-        
+        self._force_laser_fail = force_laser_fail
+
         # Configure logging with the provided level
         self._configure_logging(log_level)
 
@@ -709,8 +710,8 @@ class MOTIONConnector(QObject):
     # --- SCAN MANAGEMENT METHODS ---
     @pyqtSlot(result=list)
     def _load_laser_params(self, config_dir):
-        
-        config_path = resource_path("config", "laser_params.json") if config_dir == "config" else Path(config_dir) / "laser_params.json"
+        filename = "laser_params_fault.json" if self._force_laser_fail else "laser_params.json"
+        config_path = resource_path("config", filename) if config_dir == "config" else Path(config_dir) / filename
         if not config_path.exists():
             logger.error(f"[Connector] Laser parameter file not found: {config_path}")
             return []  

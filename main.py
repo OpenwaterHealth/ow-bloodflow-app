@@ -56,6 +56,7 @@ def _load_app_config() -> dict:
     defaults = {
         "realtimePlotEnabled": False,
         "advancedSensors": True,
+        "forceLaserFail": False,
         "eol_min_mean_per_camera": [0] * 8,
         "eol_min_contrast_per_camera": [0] * 8,
     }
@@ -154,7 +155,10 @@ def main():
     if my_args.advanced_sensors:
         app_config["advancedSensors"] = True
 
-    connector = MOTIONConnector(advanced_sensors=app_config.get("advancedSensors", True))
+    connector = MOTIONConnector(
+        advanced_sensors=app_config.get("advancedSensors", True),
+        force_laser_fail=app_config.get("forceLaserFail", False),
+    )
     connector.set_eol_thresholds(
         app_config.get("eol_min_mean_per_camera"),
         app_config.get("eol_min_contrast_per_camera"),
