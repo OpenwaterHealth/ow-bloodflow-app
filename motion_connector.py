@@ -358,7 +358,7 @@ class MOTIONConnector(QObject):
         self.log_system_information(logger)
         self.log_device_information()
         self.log_laser_information()
-        # self._read_and_log_camera_uids()
+        self._read_and_log_camera_uids()
         
         # Flush the handler to ensure header is written immediately
         try:
@@ -698,16 +698,67 @@ class MOTIONConnector(QObject):
         logger.debug(f"Console status update: {status_msg}")
 
     @pyqtSlot()
-    def shutdown(self):
-        logger.info("Shutting down MOTIONConnector...")
+    def stopCapture(self):
+        """Stop capture (Cancel button or app close). Ceases scan, disables cameras, waits for worker."""
+        if self._capture_running:
+            self.captureLog.emit("Cancel requested.")
 
-        if self._capture_thread:
-            self._capture_thread.stop()
-            self._capture_thread = None
-        
+        self._capture_stop.set()
+        try:
+            if self._interface and self._interface.console_module:
+                self._interface.console_module.stop_trigger()
+                self._trigger_state = "OFF"
+                self.triggerStateChanged.emit()
+        except Exception as e:
+            logger.warning("Error stopping trigger: %s", e)
+
+        try:
+            self._stop_runlog()
+        except Exception as e:
+            logger.warning("Error stopping run log: %s", e)
+
+        try:
+            if self._interface and self._interface.sensors:
+                interface = self._interface
+                for side in ("left", "right"):
+                    sensor = interface.sensors.get(side)
+                    if sensor and sensor.is_connected():
+                        try:
+                            interface.run_on_sensors("disable_camera", 0xFF, target=side)
+                            if hasattr(sensor, "uart") and hasattr(sensor.uart, "histo"):
+                                sensor.uart.histo.stop_streaming()
+                        except Exception as e:
+                            logger.warning("Error disabling cameras on %s: %s", side, e)
+        except Exception as e:
+            logger.warning("Error disabling cameras: %s", e)
+
+        if self._capture_thread and self._capture_thread.is_alive():
+            self._capture_thread.join(timeout=5.0)
+            if self._capture_thread.is_alive():
+                logger.warning("Capture thread did not finish within 5s timeout")
+        self._capture_thread = None
+
+    @pyqtSlot()
+    def shutdown(self):
+        """Shutdown connector. Stops capture, then stops status thread and monitoring."""
+        logger.info("Shutting down MOTIONConnector...")
+        self.stopCapture()
+
         if self._console_status_thread:
-            self._console_status_thread.stop()
+            try:
+                self._console_status_thread.stop()
+            except Exception as e:
+                logger.warning("Error stopping console status thread: %s", e)
             self._console_status_thread = None
+
+        try:
+            if self._interface:
+                self._interface.stop_monitoring()
+                logger.info("USB monitoring stopped.")
+        except Exception as e:
+            logger.warning("Error stopping monitoring: %s", e)
+
+        logger.info("MOTIONConnector shutdown complete.")
 
     # --- SCAN MANAGEMENT METHODS ---
     @pyqtSlot(result=list)
@@ -1223,20 +1274,6 @@ class MOTIONConnector(QObject):
         self.captureLog.emit("Laser safety system tripped. Scan will be cancelled in 5 seconds.")
         QTimer.singleShot(5000, self.stopCapture)
 
-    @pyqtSlot()
-    def stopCapture(self):
-        """Request capture cancellation."""
-        if not self._capture_running:
-            return
-        self.captureLog.emit("Cancel requested.")
-        self._capture_stop.set()
-        # also stop trigger ASAP
-        try:
-            self._interface.console_module.stop_trigger()
-            self._trigger_state = "OFF"; self.triggerStateChanged.emit()
-        except Exception:
-            pass
-    
     @pyqtSlot(result=QVariant)
     def tec_status(self):
         """

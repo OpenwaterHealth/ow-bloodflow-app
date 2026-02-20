@@ -200,6 +200,11 @@ def main():
 
     def handle_exit():
         logger.info("Application closing...")
+        # Cease scan, stop console trigger, turn off camera modules before monitoring stops
+        try:
+            connector.shutdown()
+        except Exception as e:
+            logger.warning("Error during connector shutdown: %s", e)
         asyncio.ensure_future(shutdown()).add_done_callback(lambda _: loop.stop())
         engine.deleteLater()  # Ensure QML engine is destroyed
         cleanup_single_instance()  # Clean up single-instance lock
