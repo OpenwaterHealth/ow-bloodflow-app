@@ -222,7 +222,7 @@ class DataProcessor:
                         csv_writer.writerow(row)
                         rows_written += 1
                         if on_row_fn:
-                            on_row_fn(cam_id, ids[cam_id], ts_val, hist, row_sum)
+                            on_row_fn(cam_id, ids[cam_id], ts_val, hist, row_sum, temps[cam_id])
                         
                 except ValueError as e:
                     # Try to resync on error

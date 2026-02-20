@@ -63,6 +63,7 @@ class MOTIONConnector(QObject):
     stateChanged = pyqtSignal()  # Signal to notify QML of state changes
     laserStateChanged = pyqtSignal()  # Signal to notify QML of laser state changes
     safetyFailureStateChanged = pyqtSignal()  # Signal to notify QML of safety
+    safetyTripDuringCaptureRequested = pyqtSignal()  # Emitted when safety trips while scan running (main-thread slot shows message & schedules cancel)
     triggerStateChanged = pyqtSignal()  # Signal to notify QML of trigger state changes
     directoryChanged = pyqtSignal()  # Signal to notify QML of directory changes
     subjectIdChanged = pyqtSignal()  # Signal to notify QML of subject ID changes
@@ -86,6 +87,7 @@ class MOTIONConnector(QObject):
     captureFinished = pyqtSignal(bool, str, str, str)       # ok, error, leftPath, rightPath
     scanNotesChanged = pyqtSignal()
     scanMeanSampled = pyqtSignal(str, int, float, float)  # side, cam_id, timestamp_s, mean
+    scanContrastSampled = pyqtSignal(str, int, float, float)  # side, cam_id, timestamp_s, contrast
     scanBfiSampled = pyqtSignal(str, int, float, float)   # side, cam_id, timestamp_s, bfi
     scanBviSampled = pyqtSignal(str, int, float, float)   # side, cam_id, timestamp_s, bvi
     scanBfiCorrectedSampled = pyqtSignal(str, int, float, float)  # side, cam_id, timestamp_s, bfi
@@ -101,11 +103,13 @@ class MOTIONConnector(QObject):
     tecStatusChanged = pyqtSignal()
     tecDacChanged = pyqtSignal()
 
-    def __init__(self, config_dir="config", parent=None, advanced_sensors=False, log_level=logging.INFO):
+    def __init__(self, config_dir="config", parent=None, advanced_sensors=False, log_level=logging.INFO, force_laser_fail=False, camera_temp_alert_threshold_c=105.0):
         super().__init__(parent)
         self._interface = motion_interface
         self._advanced_sensors = advanced_sensors
-        
+        self._force_laser_fail = force_laser_fail
+        self._camera_temp_alert_threshold_c = float(camera_temp_alert_threshold_c)
+
         # Configure logging with the provided level
         self._configure_logging(log_level)
 
@@ -127,12 +131,16 @@ class MOTIONConnector(QObject):
         self.laser_params = self._load_laser_params(config_dir)
         self._tec_voltage_default = self._load_tec_params(config_dir)
 
+        self._eol_min_mean_per_camera = None  # list of 8 or None; set via set_eol_thresholds()
+        self._eol_min_contrast_per_camera = None
+
         self._post_thread = None
         self._post_cancel = threading.Event()
 
         self._capture_thread = None
         self._capture_stop = threading.Event()
         self._capture_running = False
+        self._safety_cancel_scheduled = False  # True after scheduling cancel-due-to-safety; cleared when capture ends
         self._capture_left_path = ""
         self._capture_right_path = ""
         self._scan_notes = ""  
@@ -194,6 +202,14 @@ class MOTIONConnector(QObject):
             self._console_status_thread.statusUpdate.connect(self.handleUpdateCapStatus)
             self._console_status_thread.start()
 
+    def set_eol_thresholds(
+        self,
+        min_mean_per_camera=None,
+        min_contrast_per_camera=None,
+    ):
+        """Set EOL test thresholds per camera (index 0-7). None or list of up to 8 numbers."""
+        self._eol_min_mean_per_camera = min_mean_per_camera if isinstance(min_mean_per_camera, (list, tuple)) else None
+        self._eol_min_contrast_per_camera = min_contrast_per_camera if isinstance(min_contrast_per_camera, (list, tuple)) else None
 
     def _configure_logging(self, log_level):
 
@@ -245,6 +261,12 @@ class MOTIONConnector(QObject):
             return
         self._enable_sensor_debug_logging(side)
         self.getFanControlStatus(side)
+        try:
+            sensor = self._interface.sensors.get(side) if self._interface and self._interface.sensors else None
+            if sensor is not None and getattr(sensor, "refresh_id_cache", None) is not None:
+                sensor.refresh_id_cache()
+        except Exception as e:
+            logger.debug("Could not refresh sensor ID cache for %s: %s", side, e)
         self.connectionStatusChanged.emit()
 
     def _start_runlog(self, subject_id: str = None):
@@ -629,8 +651,20 @@ class MOTIONConnector(QObject):
         """Handle device disconnection."""
         if descriptor.upper() == "SENSOR_LEFT":
             self._leftSensorConnected = False
+            try:
+                sensor = self._interface.sensors.get("left") if self._interface and self._interface.sensors else None
+                if sensor is not None and getattr(sensor, "clear_id_cache", None) is not None:
+                    sensor.clear_id_cache()
+            except Exception:
+                pass
         elif descriptor.upper() == "SENSOR_RIGHT":
             self._rightSensorConnected = False
+            try:
+                sensor = self._interface.sensors.get("right") if self._interface and self._interface.sensors else None
+                if sensor is not None and getattr(sensor, "clear_id_cache", None) is not None:
+                    sensor.clear_id_cache()
+            except Exception:
+                pass
         elif descriptor.upper() == "CONSOLE":
             self._consoleConnected = False
             # Stop console status thread when console disconnects
@@ -678,8 +712,8 @@ class MOTIONConnector(QObject):
     # --- SCAN MANAGEMENT METHODS ---
     @pyqtSlot(result=list)
     def _load_laser_params(self, config_dir):
-        
-        config_path = resource_path("config", "laser_params.json") if config_dir == "config" else Path(config_dir) / "laser_params.json"
+        filename = "laser_params_fault.json" if self._force_laser_fail else "laser_params.json"
+        config_path = resource_path("config", filename) if config_dir == "config" else Path(config_dir) / filename
         if not config_path.exists():
             logger.error(f"[Connector] Laser parameter file not found: {config_path}")
             return []  
@@ -846,6 +880,10 @@ class MOTIONConnector(QObject):
             self.captureLog.emit("Capture already running.")
             return False
 
+        if self._safetyFailure:
+            self.captureLog.emit("Scan cannot start: laser safety system is tripped. Clear the safety interlock first.")
+            return False
+
         # sanitize/prepare
         try:
             os.makedirs(data_dir, exist_ok=True)
@@ -910,7 +948,7 @@ class MOTIONConnector(QObject):
                             err = f"Failed to enable external frame sync on {side}."
                             self.captureLog.emit(err)
                             raise RuntimeError(err)
-
+                time.sleep(.1)
                 # Enable cameras per side with that side's mask
                 logger.info("Enabling cameras…")
                 self.captureLog.emit("Enabling cameras…")
@@ -1036,6 +1074,7 @@ class MOTIONConnector(QObject):
                 ok = False
             finally:
                 self._capture_running = False
+                self._safety_cancel_scheduled = False
                 self._capture_thread = None
                 self.captureFinished.emit(ok, err, left_path, right_path)
                 self._stop_runlog()
@@ -1077,6 +1116,9 @@ class MOTIONConnector(QObject):
         logger.info("Scan image stats per camera:")
         run_logger.info("Scan image stats per camera:")
 
+        # Build rows for CSV export (same data as log output)
+        eol_rows = []
+
         for idx in range(len(per_cam_mean)):
             cam_id = None
             if camera_inds is not None and idx < len(camera_inds):
@@ -1095,22 +1137,91 @@ class MOTIONConnector(QObject):
             else:
                 label = f"camera {cam_id}"
 
+            mean_val = float(per_cam_mean[idx])
+            avg_contrast = float(per_cam_contrast[idx]) if per_cam_contrast is not None else None
+
             if per_cam_contrast is None:
-                logger.info("  %s mean: %.0f", label, float(per_cam_mean[idx]))
-                run_logger.info("  %s mean: %.0f", label, float(per_cam_mean[idx]))
+                logger.info("  %s mean: %.0f", label, mean_val)
+                run_logger.info("  %s mean: %.0f", label, mean_val)
             else:
                 logger.info(
                     "  %s mean: %.0f, avg contrast: %.3f",
                     label,
-                    float(per_cam_mean[idx]),
-                    float(per_cam_contrast[idx]),
+                    mean_val,
+                    avg_contrast,
                 )
-                run_logger.info(
-                    "  %s mean: %.0f, avg contrast: %.3f",
-                    label,
-                    float(per_cam_mean[idx]),
-                    float(per_cam_contrast[idx]),
+
+            # Get cached security UID and HWID from SDK (sensor retains these)
+            side_key = (side or "").lower()
+            cid = int(cam_id) if cam_id is not None and cam_id != "" else -1
+            sensor = self._interface.sensors.get(side_key) if self._interface and self._interface.sensors else None
+            if sensor is not None and hasattr(sensor, "get_cached_camera_security_uid") and hasattr(sensor, "get_cached_hardware_id"):
+                security_id = sensor.get_cached_camera_security_uid(cid) if cid >= 0 else ""
+                hwid = sensor.get_cached_hardware_id()
+            else:
+                security_id = ""
+                hwid = ""
+
+            # EOL thresholds: use cam_id (0-7) to index per-camera minimums
+            cam_idx = cid if cid >= 0 else idx
+            min_mean = None
+            min_contrast = None
+            if self._eol_min_mean_per_camera and cam_idx < len(self._eol_min_mean_per_camera):
+                min_mean = self._eol_min_mean_per_camera[cam_idx]
+            if self._eol_min_contrast_per_camera and cam_idx < len(self._eol_min_contrast_per_camera):
+                min_contrast = self._eol_min_contrast_per_camera[cam_idx]
+
+            if min_mean is not None and not isinstance(min_mean, (int, float)):
+                min_mean = None
+            if min_contrast is not None and not isinstance(min_contrast, (int, float)):
+                min_contrast = None
+
+            mean_test = "PASS" if (min_mean is None or mean_val >= min_mean) else "FAIL"
+            if min_contrast is None:
+                contrast_test = "PASS"
+            elif avg_contrast is None:
+                contrast_test = "FAIL"
+            else:
+                contrast_test = "PASS" if avg_contrast >= min_contrast else "FAIL"
+
+            eol_rows.append({
+                "camera_index": idx,
+                "side": side or "",
+                "cam_id": cam_id if cam_id is not None else "",
+                "mean": mean_val,
+                "avg_contrast": avg_contrast if avg_contrast is not None else "",
+                "mean_test": mean_test,
+                "contrast_test": contrast_test,
+                "security_id": security_id or "",
+                "hwid": hwid or "",
+            })
+
+        # Write CSV to app-logs/eol-test-csvs
+        try:
+            eol_dir = os.path.join(os.getcwd(), "app-logs", "eol-test-csvs")
+            os.makedirs(eol_dir, exist_ok=True)
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            eol_path = os.path.join(eol_dir, f"eol-test-{ts}.csv")
+            with open(eol_path, "w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(
+                    f,
+                    fieldnames=["camera_index", "side", "cam_id", "mean", "avg_contrast", "mean_test", "contrast_test", "security_id", "hwid"],
                 )
+                w.writeheader()
+                w.writerows(eol_rows)
+            logger.info(f"Scan image stats CSV written to {eol_path}")
+            run_logger.info(f"Scan image stats CSV written to {eol_path}")
+        except Exception as e:
+            logger.warning(f"Failed to write EOL test CSV: {e}")
+            run_logger.warning(f"Failed to write EOL test CSV: {e}")
+
+    def _on_safety_trip_during_capture(self):
+        """Called on main thread when safety tripped while scan was running: show message and cancel scan in 5 s."""
+        if not self._capture_running or self._safety_cancel_scheduled:
+            return
+        self._safety_cancel_scheduled = True
+        self.captureLog.emit("Laser safety system tripped. Scan will be cancelled in 5 seconds.")
+        QTimer.singleShot(5000, self.stopCapture)
 
     @pyqtSlot()
     def stopCapture(self):
@@ -1255,16 +1366,20 @@ class MOTIONConnector(QObject):
             status_text = f"SE: 0x{statuses['SE']:02X}, SO: 0x{statuses['SO']:02X}"
             if (statuses["SE"] & 0x0F) == 0 and (statuses["SO"] & 0x0F) == 0:
                 if self._safetyFailure:
-                    self.safetyFailure(False)
+                    self.safetyFailure = False
             else:
                 if not self._safetyFailure:
-                    self.safetyFailure(True)
+                    self.safetyFailure = True
                     self.stopTrigger()
                     self.laserStateChanged.emit(False)
+                    if self._capture_running and not self._safety_cancel_scheduled:
+                        self.safetyTripDuringCaptureRequested.emit()
 
         except Exception as e:
             logger.error(f"readSafetyStatus status query failed: {e}")
-            self.safetyFailure(True)
+            self.safetyFailure = True
+            if self._capture_running and not self._safety_cancel_scheduled:
+                self.safetyTripDuringCaptureRequested.emit()
 
     @pyqtSlot(str, int, int, int, int, int, result=QVariant)
     def i2cReadBytes(self, target: str, mux_idx: int, channel: int, i2c_addr: int, offset: int, data_len: int):
@@ -1916,8 +2031,17 @@ class MOTIONConnector(QObject):
                 def _extra_cols():
                     with self._telemetry_lock:
                         return [int(self._tcm), int(self._tcl), f"{float(self._pdc):.3f}"]
-                def _on_row(cam_id, frame_id, ts_val, hist, row_sum):
+                _temp_alerted = set()  # cam_ids that have already triggered 105°C alert this scan
+                def _on_row(cam_id, frame_id, ts_val, hist, row_sum, temp):
                     try:
+                        # Alert (and log) if camera temperature reaches threshold; do not interrupt scan
+                        threshold = self._camera_temp_alert_threshold_c
+                        if temp >= threshold and cam_id not in _temp_alerted:
+                            _temp_alerted.add(cam_id)
+                            msg = f"ALERT: Camera {cam_id+1} ({side}) temperature {temp:.1f}°C >= {threshold:.0f}°C threshold."
+                            self.captureLog.emit(msg)
+                            run_logger.warning(msg)
+                            logger.warning(msg)
                         if row_sum > 0:
                             mean_val = float(np.dot(hist, HISTO_BINS) / row_sum)
                         else:
@@ -1948,6 +2072,7 @@ class MOTIONConnector(QObject):
                             bvi_val = (1.0 - ((mean_val - imin) / iden)) * 10.0
                         timestamp = float(ts_val) if ts_val else time.time()
                         self.scanMeanSampled.emit(side, int(cam_id), float(timestamp), mean_val)
+                        self.scanContrastSampled.emit(side, int(cam_id), float(timestamp), float(contrast))
                         self.scanBfiSampled.emit(side, int(cam_id), float(timestamp), float(bfi_val))
                         self.scanBviSampled.emit(side, int(cam_id), float(timestamp), float(bvi_val))
                         self._corr_queue.put((side, int(cam_id), float(timestamp), mean_val, float(bfi_val), float(bvi_val)))
@@ -1970,6 +2095,7 @@ class MOTIONConnector(QObject):
         motion_interface.signal_connect.connect(self.on_connected)
         motion_interface.signal_disconnect.connect(self.on_disconnected)
         motion_interface.signal_data_received.connect(self.on_data_received)
+        self.safetyTripDuringCaptureRequested.connect(self._on_safety_trip_during_capture)
 
     def _correction_worker(self):
         per_camera_state = {}
