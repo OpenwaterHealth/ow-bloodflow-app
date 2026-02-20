@@ -34,6 +34,7 @@ R_1 = 18000 #(R221)
 R_2 = 8160  #(R224)
 R_3 = 51100 #(R225)
 TEC_VOLTAGE_DEFAULT = 1.1  # volts
+DATA_ACQ_INTERVAL = 1.0 # seconds
 
 HISTO_BINS_SQ = HISTO_BINS * HISTO_BINS
 _BFI_CAL = VisualizeBloodflow(left_csv="", right_csv="")
@@ -2309,8 +2310,11 @@ class ConsoleStatusThread(QThread):
         """Run loop that calls readSafetyStatus() every 1000ms when console is connected."""
         logger.info("Console status thread started")
         while self._running:
+            now = time.time()
+
+            # run the heavy work ~1 Hz
             # Check if console is connected before reading safety status
-            if self.connector._consoleConnected:
+            if now - self.last_run >= DATA_ACQ_INTERVAL and self.connector._consoleConnected:
                 try:
                     #
                     # 1. TEC status poll
@@ -2366,6 +2370,8 @@ class ConsoleStatusThread(QThread):
                     logger.error(f"Console status query failed: {e}")
                     self.statusUpdate.emit(f"Safety status read error: {e}")
 
+                # mark we ran this 1Hz tick
+                self.last_run = now
 
     def stop(self):
         """Called from another thread to stop the thread gracefully."""
