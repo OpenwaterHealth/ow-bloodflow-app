@@ -642,6 +642,13 @@ class MOTIONConnector(QObject):
                 self._console_status_thread = ConsoleStatusThread(self)
                 self._console_status_thread.statusUpdate.connect(self.handleUpdateCapStatus)
                 self._console_status_thread.start()
+            else:
+                # Wake the status thread so it notices the new console connection immediately
+                try:
+                    if getattr(self, "_console_status_thread", None) is not None:
+                        self._console_status_thread._wait_condition.wakeAll()
+                except Exception:
+                    pass
 
         self.signalConnected.emit(descriptor, port)
         self.connectionStatusChanged.emit() 
@@ -2311,10 +2318,10 @@ class ConsoleStatusThread(QThread):
         logger.info("Console status thread started")
         while self._running:
             now = time.time()
-
             # run the heavy work ~1 Hz
             # Check if console is connected before reading safety status
             if now - self.last_run >= DATA_ACQ_INTERVAL and self.connector._consoleConnected:
+                start_tick = time.time()
                 try:
                     #
                     # 1. TEC status poll
@@ -2370,8 +2377,26 @@ class ConsoleStatusThread(QThread):
                     logger.error(f"Console status query failed: {e}")
                     self.statusUpdate.emit(f"Safety status read error: {e}")
 
-                # mark we ran this 1Hz tick
-                self.last_run = now
+                # mark we ran this 1Hz tick (use tick start so we maintain a stable cadence)
+                self.last_run = start_tick
+
+                # log how long the tick took
+                duration = time.time() - start_tick
+                logger.debug("ConsoleStatusThread tick duration: %.1f ms", duration * 1000.0)
+
+            # compute a smarter wait: sleep until next scheduled tick (but clamp to sensible bounds)
+            now_after = time.time()
+            elapsed = now_after - self.last_run
+            remaining = DATA_ACQ_INTERVAL - elapsed
+            # minimum wait 50ms to avoid tight spin; maximum 1000ms
+            wait_ms = int(max(50, min(1000, remaining * 1000))) if remaining > 0 else 50
+
+            # sleep/wait for up to wait_ms, or until stop()/wakeAll() is called
+            self._mutex.lock()
+            try:
+                self._wait_condition.wait(self._mutex, wait_ms)
+            finally:
+                self._mutex.unlock()
 
     def stop(self):
         """Called from another thread to stop the thread gracefully."""
