@@ -57,6 +57,7 @@ def _load_app_config() -> dict:
         "realtimePlotEnabled": False,
         "advancedSensors": True,
         "forceLaserFail": False,
+        "output_path": None,  # None = use cwd; str = base directory for scan_data, app-logs, run-logs
         "eol_min_mean_per_camera": [0] * 8,
         "eol_min_contrast_per_camera": [0] * 8,
     }
@@ -67,7 +68,7 @@ def _load_app_config() -> dict:
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             loaded = json.load(f)
-        out = {**defaults, **{k: v for k, v in loaded.items() if k in defaults}}
+        out = {**defaults, **{k: v for k, v in loaded.items() if k in defaults or k == "output_path"}}
         logger.info("Loaded app config from %s: realtimePlotEnabled=%s, advancedSensors=%s",
                     config_path, out.get("realtimePlotEnabled"), out.get("advancedSensors"))
         return out
@@ -110,7 +111,9 @@ def main():
     logger.addHandler(console_handler)
 
     #Configure file logging
-    run_dir = os.path.join(os.getcwd(), "app-logs") # Also add file handler for local logging
+    app_config = _load_app_config()
+    output_base = app_config.get("output_path") or os.getcwd()
+    run_dir = os.path.join(output_base, "app-logs")
     os.makedirs(run_dir, exist_ok=True)
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S") # Build timestamp like 20251029_124455
     logfile_path = os.path.join(run_dir, f"ow-bloodflowapp-{ts}.log")
@@ -150,8 +153,7 @@ def main():
     
     engine = QQmlApplicationEngine()
 
-    # Load application config (realtime plot, etc.) and allow CLI overrides
-    app_config = _load_app_config()
+    # Apply CLI overrides to already-loaded app_config
     if my_args.advanced_sensors:
         app_config["advancedSensors"] = True
 
@@ -159,6 +161,7 @@ def main():
         advanced_sensors=app_config.get("advancedSensors", True),
         force_laser_fail=app_config.get("forceLaserFail", False),
         camera_temp_alert_threshold_c=app_config.get("cameraTempAlertThresholdC", 105),
+        output_path=output_base,
     )
     connector.set_eol_thresholds(
         app_config.get("eol_min_mean_per_camera"),

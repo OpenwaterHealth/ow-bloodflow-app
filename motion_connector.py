@@ -104,12 +104,13 @@ class MOTIONConnector(QObject):
     tecStatusChanged = pyqtSignal()
     tecDacChanged = pyqtSignal()
 
-    def __init__(self, config_dir="config", parent=None, advanced_sensors=False, log_level=logging.INFO, force_laser_fail=False, camera_temp_alert_threshold_c=105.0):
+    def __init__(self, config_dir="config", parent=None, advanced_sensors=False, log_level=logging.INFO, force_laser_fail=False, camera_temp_alert_threshold_c=105.0, output_path=None):
         super().__init__(parent)
         self._interface = motion_interface
         self._advanced_sensors = advanced_sensors
         self._force_laser_fail = force_laser_fail
         self._camera_temp_alert_threshold_c = float(camera_temp_alert_threshold_c)
+        self._output_base = output_path or os.getcwd()
 
         # Configure logging with the provided level
         self._configure_logging(log_level)
@@ -180,7 +181,7 @@ class MOTIONConnector(QObject):
         self._runlog_csv_writer = None      # csv.writer or None
         self._runlog_csv_lock = threading.Lock()
 
-        default_dir = os.path.join(os.getcwd(), "scan_data")
+        default_dir = os.path.join(self._output_base, "scan_data")
         os.makedirs(default_dir, exist_ok=True)
         self._directory = default_dir
         logger.info(f"[Connector] Default directory initialized to: {self._directory}")
@@ -281,7 +282,7 @@ class MOTIONConnector(QObject):
             return
 
         # Directory for individual trigger runs
-        run_dir = os.path.join(os.getcwd(), "run-logs")
+        run_dir = os.path.join(self._output_base, "run-logs")
         os.makedirs(run_dir, exist_ok=True)
 
         # Timestamped filename for this specific trigger session
@@ -1206,7 +1207,7 @@ class MOTIONConnector(QObject):
 
         # Write CSV to app-logs/eol-test-csvs
         try:
-            eol_dir = os.path.join(os.getcwd(), "app-logs", "eol-test-csvs")
+            eol_dir = os.path.join(self._output_base, "app-logs", "eol-test-csvs")
             os.makedirs(eol_dir, exist_ok=True)
             ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             eol_path = os.path.join(eol_dir, f"eol-test-{ts}.csv")
