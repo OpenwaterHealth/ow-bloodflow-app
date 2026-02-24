@@ -229,27 +229,37 @@ class VisualizeBloodflow:
         
         
         # Adjust the number of rows and columns based on the number of cameras active
-        if len(camera_inds) == 16: # this is dual camera 8 cams
+        left_cams = [(ind, int(camera_inds[ind])) for ind in range(len(camera_inds)) if self._sides[ind] == "left"]
+        right_cams = [(ind, int(camera_inds[ind])) for ind in range(len(camera_inds)) if self._sides[ind] == "right"]
+        n_left, n_right = len(left_cams), len(right_cams)
+
+        if len(camera_inds) == 16:  # dual sensor, 8 cams each
             nrows = 8
             ncols = 2
-        elif has_left ^ has_right and len(camera_inds) == 8: # this is single camera 8 cams
+        elif has_left ^ has_right and len(camera_inds) == 8:  # single sensor, 8 cams
             nrows = 8
             ncols = 1
-        elif has_left and has_right and len(camera_inds) == 8: # this is dual camera 4 cams
+        elif has_left and has_right and len(camera_inds) == 8:  # dual sensor, 4 cams each
             nrows = 4
             ncols = 2
-        elif has_left ^ has_right and len(camera_inds) == 4: # this is single camera 4 cams
+        elif has_left ^ has_right and len(camera_inds) == 4:  # single sensor, 4 cams
             nrows = 4
+            ncols = 1
+        elif has_left and has_right:  # dual sensor, arbitrary channels (e.g. 2+2 for Third Row)
+            nrows = max(n_left, n_right)
+            ncols = 2
+        else:  # single sensor, arbitrary channels (e.g. 2 for Third Row)
+            nrows = len(camera_inds)
             ncols = 1
 
         # Create grid with appropriate number of columns
         fig, ax = plt.subplots(nrows=nrows, ncols=ncols, figsize=(6 * ncols, 8), squeeze=False)
 
-        # Birmingham mapping: camera position to subplot row
+        # Birmingham mapping: camera position to subplot row (fallback to cam_position for arbitrary counts)
         position_to_row = {0: 0, 1: 1, 2: 2, 3: 3}  # Far sensor on top
         
         # Initialize all subplots as empty placeholders
-        for row in range(4):
+        for row in range(nrows):
             for col in range(ncols):
                 ax[row, col].text(0.5, 0.5, 'No Data', 
                                 ha='center', va='center', 
@@ -260,11 +270,7 @@ class VisualizeBloodflow:
                 ax[row, col].set_xticks([])
                 ax[row, col].set_yticks([])
 
-        # Group cameras by module to get sequential positions per module
-        left_cams = [(ind, int(camera_inds[ind])) for ind in range(len(camera_inds)) if self._sides[ind] == "left"]
-        right_cams = [(ind, int(camera_inds[ind])) for ind in range(len(camera_inds)) if self._sides[ind] == "right"]
-        
-        # Plot actual camera data - iterate through all cameras using _sides array
+        # Plot actual camera data (left_cams, right_cams already computed above) - iterate through all cameras using _sides array
         for ind_cam in range(len(camera_inds)):
             # Determine module (column) from _sides array
             is_left = self._sides[ind_cam] == "left"
