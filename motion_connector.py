@@ -37,6 +37,7 @@ R230 = 300E3
 R234 = 300E3
 R_s = 0.020 #(R217)
 TEC_VOLTAGE_DEFAULT = -0.07  # volts (DVT1a=-0.07, EVT2=1.16)
+DATA_ACQ_INTERVAL = 1.0
 
 HISTO_BINS_SQ = HISTO_BINS * HISTO_BINS
 _BFI_CAL = VisualizeBloodflow(left_csv="", right_csv="")
