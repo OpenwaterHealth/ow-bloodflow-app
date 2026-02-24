@@ -29,12 +29,14 @@ import pandas as pd
 # constants for calculations
 SCALE_V = 0.0909
 SCALE_I = 0.25
-V_REF = 2.5
+V_REF = 2.459 # Should be 2.5V but empirical measurements don't match
 R_1 = 18000 #(R221)
 R_2 = 8160  #(R224)
-R_3 = 51100 #(R225)
-TEC_VOLTAGE_DEFAULT = 1.1  # volts
-DATA_ACQ_INTERVAL = 1.0 # seconds
+R_3 = 49900 #(R225)
+R230 = 300E3
+R234 = 300E3
+R_s = 0.020 #(R217)
+TEC_VOLTAGE_DEFAULT = -0.07  # volts (DVT1a=-0.07, EVT2=1.16)
 
 HISTO_BINS_SQ = HISTO_BINS * HISTO_BINS
 _BFI_CAL = VisualizeBloodflow(left_csv="", right_csv="")
@@ -1293,18 +1295,17 @@ class MOTIONConnector(QObject):
         try:
             v, i, p, t, ok = motion_interface.console_module.tec_status()
 
-            R_TH = 1/((float(v) / (V_REF/2*R_3)) - 1/R_3 + 1/R_1) - R_2
+            R_TH = 1/((float(v) / (V_REF/2*R_3)) - 1/R_3 + 1/R_1) - R_2 # v = OUT1, VOUT1 from ADC
             Thermistor_Temp = np.interp(R_TH, self._data_RT[:,1][::-1], self._data_RT[:,0][::-1])
 
-            
-            R_SET = 1/((float(i) / (V_REF/2*R_3)) - 1/R_3 + 1/R_1) - R_2
+            R_SET = 1/((float(i) / (V_REF/2*R_3)) - 1/R_3 + 1/R_1) - R_2 # i = IN2P, TEMPSET from ADC
             SET_Temp = np.interp(R_SET, self._data_RT[:,1][::-1], self._data_RT[:,0][::-1])
 
-            self._tec_voltage   = round(float(Thermistor_Temp), 2)
-            self._tec_temp      = round(float(SET_Temp), 2)
-            self._tec_monC      = round(float(p), 3)
-            self._tec_monV      = round(float(t), 3)
-            self._tec_good      = bool(ok)
+            self._tec_voltage   = round(float(Thermistor_Temp), 2) # Measured thermistor temperature
+            self._tec_temp      = round(float(SET_Temp), 2) # Measured target setpiont
+            self._tec_monC      = round((float(p) - 0.5*V_REF) / (25*R_s), 3) # p = V_itec
+            self._tec_monV      = round((float(t) - 0.5*V_REF) * 4, 3) # t = V_vtec
+            self._tec_good      = bool(ok) # TMPGD pin (abs(OUT1-IN2P) < 100mV)
 
             # Long-run health sample -> goes ONLY to run.log
                 
