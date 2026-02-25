@@ -18,7 +18,7 @@ import platform
 import socket
 
 from motion_singleton import motion_interface  
-from omotion.config import DEBUG_FLAG_USB_PRINTF
+from omotion.config import DEBUG_FLAG_USB_PRINTF, DEBUG_FLAG_FAKE_DATA
 from processing.data_processing import DataProcessor, HISTO_BINS
 from processing.visualize_bloodflow import VisualizeBloodflow
 from utils.resource_path import resource_path
@@ -107,12 +107,14 @@ class MOTIONConnector(QObject):
     tecStatusChanged = pyqtSignal()
     tecDacChanged = pyqtSignal()
 
-    def __init__(self, config_dir="config", parent=None, advanced_sensors=False, log_level=logging.INFO, force_laser_fail=False, camera_temp_alert_threshold_c=105.0, output_path=None):
+    def __init__(self, config_dir="config", parent=None, advanced_sensors=False, log_level=logging.INFO, force_laser_fail=False, camera_temp_alert_threshold_c=105.0, sensor_debug_logging=False, camera_fake_data=False, output_path=None):
         super().__init__(parent)
         self._interface = motion_interface
         self._advanced_sensors = advanced_sensors
         self._force_laser_fail = force_laser_fail
         self._camera_temp_alert_threshold_c = float(camera_temp_alert_threshold_c)
+        self._sensor_debug_logging = bool(sensor_debug_logging)
+        self._camera_fake_data = bool(camera_fake_data)
         self._output_base = output_path or os.getcwd()
 
         # Configure logging with the provided level
@@ -249,11 +251,16 @@ class MOTIONConnector(QObject):
             logger.warning(f"Sensor debug logging skipped: {side} sensor not connected")
             return
 
-        logger.info(f"Requesting sensor debug logging enable for {side} sensor")
-        if sensor.set_debug_flags(DEBUG_FLAG_USB_PRINTF):
-            logger.info(f"Enabled sensor debug logging for {side} sensor")
+        flags = 0
+        if self._sensor_debug_logging:
+            flags |= DEBUG_FLAG_USB_PRINTF
+        if self._camera_fake_data:
+            flags |= DEBUG_FLAG_FAKE_DATA
+        logger.info(f"Requesting sensor debug flags for {side} sensor: debug_logging={self._sensor_debug_logging}, fake_data={self._camera_fake_data} (flags=0x{flags:x})")
+        if sensor.set_debug_flags(flags):
+            logger.info(f"Set sensor debug flags for {side} sensor")
         else:
-            logger.warning(f"Failed to enable sensor debug logging for {side} sensor")
+            logger.warning(f"Failed to set sensor debug flags for {side} sensor")
 
     def _schedule_sensor_init(self, side: str):
         """Delay initial sensor commands to allow USB settle."""
@@ -999,6 +1006,23 @@ class MOTIONConnector(QObject):
                 ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 logger.info("Preparing capture…")
                 self.captureLog.emit("Preparing capture…")
+
+                # Apply debug flags (fake data, sensor logging) on each active sensor before scan
+                flags = 0
+                if self._sensor_debug_logging:
+                    flags |= DEBUG_FLAG_USB_PRINTF
+                if self._camera_fake_data:
+                    flags |= DEBUG_FLAG_FAKE_DATA
+                if flags != 0:
+                    if self._camera_fake_data:
+                        self.captureLog.emit("Camera fake-data mode enabled (DEBUG_FLAG_FAKE_DATA).")
+                    for side, _mask, sensor in active_sides:
+                        if sensor and sensor.is_connected():
+                            if sensor.set_debug_flags(flags):
+                                logger.info(f"Set debug flags 0x{flags:x} on {side} sensor before scan")
+                            else:
+                                logger.warning(f"Failed to set debug flags on {side} sensor before scan")
+                    time.sleep(0.1)
 
                 # Frame sync only for active sides (if using external sync)
                 if not disable_laser:
