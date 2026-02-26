@@ -60,6 +60,7 @@ def _load_app_config() -> dict:
         "cameraTempAlertThresholdC": 105,
         "sensorDebugLogging": False,
         "cameraFakeData": False,
+        "histoThrottle": False,
         "output_path": None,  # None = use cwd; str = base directory for scan_data, app-logs, run-logs
         "eol_min_mean_per_camera": [0] * 8,
         "eol_min_contrast_per_camera": [0] * 8,
@@ -166,6 +167,7 @@ def main():
         camera_temp_alert_threshold_c=app_config.get("cameraTempAlertThresholdC", 105),
         sensor_debug_logging=app_config.get("sensorDebugLogging", False),
         camera_fake_data=app_config.get("cameraFakeData", False),
+        histo_throttle=app_config.get("histoThrottle", False),
         output_path=output_base,
     )
     connector.set_eol_thresholds(
