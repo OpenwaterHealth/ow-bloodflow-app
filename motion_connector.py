@@ -2296,6 +2296,42 @@ class _ConfigureWorker(QThread):
 
         tasks = [("left", p) for p in left_positions] + [("right", p) for p in right_positions]
 
+        # Power on cameras for each side before programming FPGAs (same as at scan start)
+        self.log.emit("Powering on cameras before programming FPGAs…")
+        logger.info("Powering on cameras before programming FPGAs…")
+        sides_info = [
+            ("left", self.left_camera_mask, self.interface.sensors.get("left")),
+            ("right", self.right_camera_mask, self.interface.sensors.get("right")),
+        ]
+        for side, mask, sensor in sides_info:
+            if mask == 0 or not (sensor and sensor.is_connected()):
+                continue
+            try:
+                power_status = sensor.get_camera_power_status()
+                if not power_status or len(power_status) != 8:
+                    self.log.emit(f"{side}: could not get camera power status")
+                    logger.warning(f"{side}: could not get camera power status")
+                    continue
+                off_mask = sum(1 << i for i in range(8) if power_status[i] and not (mask & (1 << i)))
+                on_mask = mask & 0xFF
+                if off_mask:
+                    if sensor.disable_camera_power(off_mask):
+                        self.log.emit(f"{side}: powered off cameras not in mask (0x{off_mask:02X})")
+                    time.sleep(0.05)
+                if on_mask:
+                    if sensor.enable_camera_power(on_mask):
+                        self.log.emit(f"{side}: powered on cameras (mask 0x{on_mask:02X})")
+                    else:
+                        err = f"Failed to power on cameras on {side} (mask 0x{on_mask:02X})."
+                        self.log.emit(err)
+                        self.finished.emit(False, err)
+                        return
+                    time.sleep(0.5)
+            except Exception as e:
+                logger.error(f"Error setting camera power for {side}: {e}")
+                self.finished.emit(False, f"Camera power error ({side}): {e}")
+                return
+
         # Each task has two steps: program_fpga and camera_configure_registers
         total = len(tasks) * 2
         done = 0
