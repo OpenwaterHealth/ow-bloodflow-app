@@ -778,7 +778,7 @@ class MOTIONConnector(QObject):
 
         if self._capture_thread and self._capture_thread.is_alive():
             self._capture_thread.join(timeout=5.0)
-            if self._capture_thread.is_alive():
+            if self._capture_thread and self._capture_thread.is_alive():
                 logger.warning("Capture thread did not finish within 5s timeout")
         self._capture_thread = None
 
