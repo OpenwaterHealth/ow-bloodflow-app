@@ -117,6 +117,10 @@ class VisualizeBloodflow:
         for i in range(ndark):
             histos_dark[:, i, :] = histos[:, int(inds_dark[i]), :]
 
+        #replace the 0th dark histogram with the first "good" dark histogram frame
+        first_good_dark_frame_index = 9
+        histos_dark[:, 0, :] = histos[:, first_good_dark_frame_index, :]
+
         # dark stats
         bins = np.expand_dims(np.arange(1024, dtype=float), axis=0)
         temp1 = self._moments(bins, histos_dark, 1)
