@@ -297,10 +297,28 @@ class MOTIONConnector(QObject):
             )
 
         self.getFanControlStatus(side)
+
+        # Power on all cameras, fill the ID cache (serial numbers, connection info), then power off
         try:
             sensor = self._interface.sensors.get(side) if self._interface and self._interface.sensors else None
-            if sensor is not None and getattr(sensor, "refresh_id_cache", None) is not None:
-                sensor.refresh_id_cache()
+            if sensor is not None and sensor.is_connected():
+                enable_power = getattr(sensor, "enable_camera_power", None)
+                disable_power = getattr(sensor, "disable_camera_power", None)
+                refresh_cache = getattr(sensor, "refresh_id_cache", None)
+                if enable_power and disable_power and refresh_cache:
+                    if enable_power(0xFF):
+                        logger.info("Powered on all cameras on %s sensor for ID cache fill", side)
+                        time.sleep(0.5)  # settle time
+                        refresh_cache()
+                        logger.info("Filled ID cache on %s sensor", side)
+                        disable_power(0xFF)
+                        time.sleep(0.05)
+                        logger.info("Powered off all cameras on %s sensor", side)
+                    else:
+                        logger.warning("Could not power on cameras on %s sensor for ID cache fill", side)
+                        refresh_cache()  # try anyway in case some cameras are already on
+                elif refresh_cache:
+                    refresh_cache()  # fallback: fill cache without power cycle (may get zeros for off cameras)
         except Exception as e:
             logger.debug("Could not refresh sensor ID cache for %s: %s", side, e)
         self.connectionStatusChanged.emit()
@@ -1652,32 +1670,37 @@ class MOTIONConnector(QObject):
                     run_logger.warning("No sensors connected, cannot read camera UIDs")
                 return
             
-            # Read UIDs for all cameras (0-7) on each connected sensor
+            # Read UIDs for all cameras (0-7) on each connected sensor.
+            # Prefer cached values (populated at sensor init) to avoid polling at scan start.
             for sensor_name, sensor in sensors:
                 logger.info(f"Reading camera UIDs from {sensor_name} sensor...")
                 if self._runlog_active:
                     run_logger.info(f"Reading camera UIDs from {sensor_name} sensor...")
-                
+                cache_populated = getattr(sensor, "_cached_camera_uids", None) is not None
+                get_cached = getattr(sensor, "get_cached_camera_security_uid", None)
+                read_uid = getattr(sensor, "read_camera_security_uid", None)
                 for camera_id in range(8):
                     try:
-                        uid_bytes = sensor.read_camera_security_uid(camera_id)
-                        time.sleep(0.05)
-                        
-                        # Format UID as hex string
-                        uid_hex = ''.join(f'{b:02X}' for b in uid_bytes)
-                        
-                        # Check if UID is all zeros (camera not present)
-                        if all(b == 0 for b in uid_bytes):
-                            logger.info(f"  Camera {camera_id + 1}: Not present (UID: 0x{uid_hex})")
+                        if cache_populated and get_cached:
+                            uid_str = get_cached(camera_id)
+                            uid_hex = uid_str.replace("0x", "") if uid_str else ""
+                        elif read_uid:
+                            uid_bytes = read_uid(camera_id)
+                            time.sleep(0.05)
+                            uid_hex = ''.join(f'{b:02X}' for b in uid_bytes)
+                        else:
+                            continue
+                        display_uid = f"0x{uid_hex}" if uid_hex and not uid_hex.startswith("0x") else (uid_hex or "0x000000000000")
+                        if not uid_hex or set(uid_hex.replace("0x", "").upper()) <= {"0"}:
+                            logger.info(f"  Camera {camera_id + 1}: Not present (UID: {display_uid})")
                             if self._runlog_active:
-                                run_logger.info(f"  Camera {camera_id + 1}: Not present (UID: 0x{uid_hex})")
+                                run_logger.info(f"  Camera {camera_id + 1}: Not present (UID: {display_uid})")
                             self.configLog.emit(f"Camera {camera_id + 1}: Not present")
                         else:
-                            logger.info(f"  Camera {camera_id + 1}: UID = 0x{uid_hex}")
+                            logger.info(f"  Camera {camera_id + 1}: UID = {display_uid}")
                             if self._runlog_active:
-                                run_logger.info(f"  Camera {camera_id + 1}: UID = 0x{uid_hex}")
-                            # Emit to configLog for UI display during configuration phase
-                            self.configLog.emit(f"Camera {camera_id + 1} UID: 0x{uid_hex}")
+                                run_logger.info(f"  Camera {camera_id + 1}: UID = {display_uid}")
+                            self.configLog.emit(f"Camera {camera_id + 1} UID: {display_uid}")
                     except Exception as e:
                         logger.error(f"Error reading UID for camera {camera_id + 1} on {sensor_name} sensor: {e}")
                         if self._runlog_active:
