@@ -111,7 +111,7 @@ class MOTIONConnector(QObject):
     def __init__(self, config_dir="config", parent=None, advanced_sensors=False, log_level=logging.INFO,
                  force_laser_fail=False, camera_temp_alert_threshold_c=105.0,
                  sensor_debug_logging=False, camera_fake_data=False, histo_throttle=False,
-                 output_path=None):
+                 output_path=None, power_off_unused_cameras=False):
         super().__init__(parent)
         self._interface = motion_interface
         self._advanced_sensors = advanced_sensors
@@ -121,6 +121,7 @@ class MOTIONConnector(QObject):
         self._camera_fake_data = bool(camera_fake_data)
         self._histo_throttle = bool(histo_throttle)
         self._output_base = output_path or os.getcwd()
+        self._power_off_unused_cameras = bool(power_off_unused_cameras)
 
         # Configure logging with the provided level
         self._configure_logging(log_level)
@@ -311,7 +312,8 @@ class MOTIONConnector(QObject):
                         time.sleep(0.5)  # settle time
                         refresh_cache()
                         logger.info("Filled ID cache on %s sensor", side)
-                        disable_power(0xFF)
+                        if(self._power_off_unused_cameras):
+                            disable_power(0xFF)
                         time.sleep(0.05)
                         logger.info("Powered off all cameras on %s sensor", side)
                     else:
@@ -1717,6 +1719,39 @@ class MOTIONConnector(QObject):
     @pyqtSlot(int, int)
     def startConfigureCameraSensors(self, left_camera_mask:int, right_camera_mask:int):
         if self._config_thread: return
+
+        # Power on cameras for each side before programming FPGAs (same as at scan start)
+        if(self._power_off_unused_cameras):
+            logger.info("Powering on cameras before programming FPGAs…")
+            sides_info = [
+                ("left", left_camera_mask, self.interface.sensors.get("left")),
+                ("right",right_camera_mask, self.interface.sensors.get("right")),
+            ]
+            for side, mask, sensor in sides_info:
+                if mask == 0 or not (sensor and sensor.is_connected()):
+                    continue
+                try:
+                    power_status = sensor.get_camera_power_status()
+                    if not power_status or len(power_status) != 8:
+                        logger.warning(f"{side}: could not get camera power status")
+                        continue
+                    off_mask = sum(1 << i for i in range(8) if power_status[i] and not (mask & (1 << i)))
+                    on_mask = mask & 0xFF
+                    if off_mask:
+                        if sensor.disable_camera_power(off_mask):
+                            logger.warning(f"{side}: powered off cameras not in mask (0x{off_mask:02X})")
+                        time.sleep(0.05)
+                    if on_mask:
+                        if sensor.enable_camera_power(on_mask):
+                            logger.warning(f"{side}: powered on cameras (mask 0x{on_mask:02X})")
+                        else:
+                            logger.warning(f"Failed to power on cameras on {side} (mask 0x{on_mask:02X}).")
+                            return
+                        time.sleep(0.5)
+                except Exception as e:
+                    logger.error(f"Error setting camera power for {side}: {e}")
+                    return
+
         w = _ConfigureWorker(self._interface, left_camera_mask, right_camera_mask)
         w.progress.connect(self.configProgress.emit)
         w.log.connect(self.configLog.emit)
@@ -2318,42 +2353,6 @@ class _ConfigureWorker(QThread):
             return
 
         tasks = [("left", p) for p in left_positions] + [("right", p) for p in right_positions]
-
-        # Power on cameras for each side before programming FPGAs (same as at scan start)
-        self.log.emit("Powering on cameras before programming FPGAs…")
-        logger.info("Powering on cameras before programming FPGAs…")
-        sides_info = [
-            ("left", self.left_camera_mask, self.interface.sensors.get("left")),
-            ("right", self.right_camera_mask, self.interface.sensors.get("right")),
-        ]
-        for side, mask, sensor in sides_info:
-            if mask == 0 or not (sensor and sensor.is_connected()):
-                continue
-            try:
-                power_status = sensor.get_camera_power_status()
-                if not power_status or len(power_status) != 8:
-                    self.log.emit(f"{side}: could not get camera power status")
-                    logger.warning(f"{side}: could not get camera power status")
-                    continue
-                off_mask = sum(1 << i for i in range(8) if power_status[i] and not (mask & (1 << i)))
-                on_mask = mask & 0xFF
-                if off_mask:
-                    if sensor.disable_camera_power(off_mask):
-                        self.log.emit(f"{side}: powered off cameras not in mask (0x{off_mask:02X})")
-                    time.sleep(0.05)
-                if on_mask:
-                    if sensor.enable_camera_power(on_mask):
-                        self.log.emit(f"{side}: powered on cameras (mask 0x{on_mask:02X})")
-                    else:
-                        err = f"Failed to power on cameras on {side} (mask 0x{on_mask:02X})."
-                        self.log.emit(err)
-                        self.finished.emit(False, err)
-                        return
-                    time.sleep(0.5)
-            except Exception as e:
-                logger.error(f"Error setting camera power for {side}: {e}")
-                self.finished.emit(False, f"Camera power error ({side}): {e}")
-                return
 
         # Each task has two steps: program_fpga and camera_configure_registers
         total = len(tasks) * 2
