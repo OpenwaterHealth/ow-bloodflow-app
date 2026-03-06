@@ -18,7 +18,8 @@ import platform
 import socket
 
 from motion_singleton import motion_interface  
-from omotion.config import DEBUG_FLAG_USB_PRINTF
+
+from omotion.config import DEBUG_FLAG_USB_PRINTF, DEBUG_FLAG_FAKE_DATA, DEBUG_FLAG_HISTO_THROTTLE
 from processing.data_processing import DataProcessor, HISTO_BINS
 from processing.visualize_bloodflow import VisualizeBloodflow
 from utils.resource_path import resource_path
@@ -107,13 +108,20 @@ class MOTIONConnector(QObject):
     tecStatusChanged = pyqtSignal()
     tecDacChanged = pyqtSignal()
 
-    def __init__(self, config_dir="config", parent=None, advanced_sensors=False, log_level=logging.INFO, force_laser_fail=False, camera_temp_alert_threshold_c=105.0, output_path=None):
+    def __init__(self, config_dir="config", parent=None, advanced_sensors=False, log_level=logging.INFO,
+                 force_laser_fail=False, camera_temp_alert_threshold_c=105.0,
+                 sensor_debug_logging=False, camera_fake_data=False, histo_throttle=False,
+                 output_path=None, power_off_unused_cameras=False):
         super().__init__(parent)
         self._interface = motion_interface
         self._advanced_sensors = advanced_sensors
         self._force_laser_fail = force_laser_fail
         self._camera_temp_alert_threshold_c = float(camera_temp_alert_threshold_c)
+        self._sensor_debug_logging = bool(sensor_debug_logging)
+        self._camera_fake_data = bool(camera_fake_data)
+        self._histo_throttle = bool(histo_throttle)
         self._output_base = output_path or os.getcwd()
+        self._power_off_unused_cameras = bool(power_off_unused_cameras)
 
         # Configure logging with the provided level
         self._configure_logging(log_level)
@@ -239,21 +247,16 @@ class MOTIONConnector(QObject):
             self._data_RT = None
             logger.error(f"Failed to load RT model: {e}")
 
-    def _enable_sensor_debug_logging(self, side: str):
-        sensor = motion_interface.sensors.get(side)
-        if sensor is None:
-            logger.warning(f"Sensor debug logging skipped: {side} sensor not available")
-            return
-
-        if not sensor.is_connected():
-            logger.warning(f"Sensor debug logging skipped: {side} sensor not connected")
-            return
-
-        logger.info(f"Requesting sensor debug logging enable for {side} sensor")
-        if sensor.set_debug_flags(DEBUG_FLAG_USB_PRINTF):
-            logger.info(f"Enabled sensor debug logging for {side} sensor")
-        else:
-            logger.warning(f"Failed to enable sensor debug logging for {side} sensor")
+    def _compute_sensor_debug_flags(self) -> int:
+        """Compute sensor debug flag bitfield from current config booleans."""
+        flags = 0
+        if self._sensor_debug_logging:
+            flags |= DEBUG_FLAG_USB_PRINTF
+        if self._camera_fake_data:
+            flags |= DEBUG_FLAG_FAKE_DATA
+        if self._histo_throttle:
+            flags |= DEBUG_FLAG_HISTO_THROTTLE
+        return flags
 
     def _schedule_sensor_init(self, side: str):
         """Delay initial sensor commands to allow USB settle."""
@@ -264,12 +267,60 @@ class MOTIONConnector(QObject):
             return
         if side == "right" and not self._rightSensorConnected:
             return
-        self._enable_sensor_debug_logging(side)
+
+        # Apply sensor debug flags (USB has had time to settle after connection)
+        flags = self._compute_sensor_debug_flags()
+        try:
+            sensor = (
+                self._interface.sensors.get(side)
+                if self._interface and self._interface.sensors
+                else None
+            )
+        except Exception:
+            sensor = None
+        if flags != 0 and sensor is not None and sensor.is_connected():
+            logger.info(
+                "Setting debug flags 0x%x on %s sensor "
+                "(debug_logging=%s, fake_data=%s, histoThrottle=%s)",
+                flags, side,
+                self._sensor_debug_logging,
+                self._camera_fake_data,
+                getattr(self, "_histo_throttle", False),
+            )
+            if not sensor.set_debug_flags(flags):
+                logger.warning("Failed to set debug flags on %s sensor", side)
+        elif flags != 0:
+            logger.info(
+                "Skipping debug flag set on %s sensor (flags=0x%x, sensor_present=%s, connected=%s)",
+                side, flags,
+                sensor is not None,
+                getattr(sensor, "is_connected", lambda: False)() if sensor else False,
+            )
+
         self.getFanControlStatus(side)
+
+        # Power on all cameras, fill the ID cache (serial numbers, connection info), then power off
         try:
             sensor = self._interface.sensors.get(side) if self._interface and self._interface.sensors else None
-            if sensor is not None and getattr(sensor, "refresh_id_cache", None) is not None:
-                sensor.refresh_id_cache()
+            if sensor is not None and sensor.is_connected():
+                enable_power = getattr(sensor, "enable_camera_power", None)
+                disable_power = getattr(sensor, "disable_camera_power", None)
+                refresh_cache = getattr(sensor, "refresh_id_cache", None)
+                if enable_power and disable_power and refresh_cache:
+                    if enable_power(0xFF):
+                        logger.info("Powered on all cameras on %s sensor for ID cache fill", side)
+                        time.sleep(0.5)  # settle time
+                        refresh_cache()
+                        logger.info("Filled ID cache on %s sensor", side)
+                        if(self._power_off_unused_cameras):
+                            disable_power(0xFF)
+                            time.sleep(0.05)
+                            logger.info("Powered off all cameras on %s sensor", side)
+                    else:
+                        logger.warning("Could not power on cameras on %s sensor for ID cache fill", side)
+                        refresh_cache()  # try anyway in case some cameras are already on
+                elif refresh_cache:
+                    refresh_cache()  # fallback: fill cache without power cycle (may get zeros for off cameras)
         except Exception as e:
             logger.debug("Could not refresh sensor ID cache for %s: %s", side, e)
         self.connectionStatusChanged.emit()
@@ -625,13 +676,14 @@ class MOTIONConnector(QObject):
     def on_connected(self, descriptor, port):
         """Handle device connection."""
         logger.info(f"Device connected: {descriptor} on port {port}")
-        if descriptor.upper() == "SENSOR_LEFT":
+        desc = descriptor.upper()
+        if desc == "SENSOR_LEFT":
             self._leftSensorConnected = True
             self._schedule_sensor_init("left")
-        if descriptor.upper() == "SENSOR_RIGHT":
+        elif desc == "SENSOR_RIGHT":
             self._rightSensorConnected = True
             self._schedule_sensor_init("right")
-        elif descriptor.upper() == "CONSOLE":
+        elif desc == "CONSOLE":
             self._consoleConnected = True
             if motion_interface.console_module.tec_voltage(self._tec_voltage_default):
                 logger.info(f"Console TEC voltage set to {self._tec_voltage_default}V")
@@ -746,7 +798,7 @@ class MOTIONConnector(QObject):
 
         if self._capture_thread and self._capture_thread.is_alive():
             self._capture_thread.join(timeout=5.0)
-            if self._capture_thread.is_alive():
+            if self._capture_thread and self._capture_thread.is_alive():
                 logger.warning("Capture thread did not finish within 5s timeout")
         self._capture_thread = None
 
@@ -1620,31 +1672,37 @@ class MOTIONConnector(QObject):
                     run_logger.warning("No sensors connected, cannot read camera UIDs")
                 return
             
-            # Read UIDs for all cameras (0-7) on each connected sensor
+            # Read UIDs for all cameras (0-7) on each connected sensor.
+            # Prefer cached values (populated at sensor init) to avoid polling at scan start.
             for sensor_name, sensor in sensors:
                 logger.info(f"Reading camera UIDs from {sensor_name} sensor...")
                 if self._runlog_active:
                     run_logger.info(f"Reading camera UIDs from {sensor_name} sensor...")
-                
+                cache_populated = getattr(sensor, "_cached_camera_uids", None) is not None
+                get_cached = getattr(sensor, "get_cached_camera_security_uid", None)
+                read_uid = getattr(sensor, "read_camera_security_uid", None)
                 for camera_id in range(8):
                     try:
-                        uid_bytes = sensor.read_camera_security_uid(camera_id)
-                        
-                        # Format UID as hex string
-                        uid_hex = ''.join(f'{b:02X}' for b in uid_bytes)
-                        
-                        # Check if UID is all zeros (camera not present)
-                        if all(b == 0 for b in uid_bytes):
-                            logger.info(f"  Camera {camera_id + 1}: Not present (UID: 0x{uid_hex})")
+                        if cache_populated and get_cached:
+                            uid_str = get_cached(camera_id)
+                            uid_hex = uid_str.replace("0x", "") if uid_str else ""
+                        elif read_uid:
+                            uid_bytes = read_uid(camera_id)
+                            time.sleep(0.05)
+                            uid_hex = ''.join(f'{b:02X}' for b in uid_bytes)
+                        else:
+                            continue
+                        display_uid = f"0x{uid_hex}" if uid_hex and not uid_hex.startswith("0x") else (uid_hex or "0x000000000000")
+                        if not uid_hex or set(uid_hex.replace("0x", "").upper()) <= {"0"}:
+                            logger.info(f"  Camera {camera_id + 1}: Not present (UID: {display_uid})")
                             if self._runlog_active:
-                                run_logger.info(f"  Camera {camera_id + 1}: Not present (UID: 0x{uid_hex})")
+                                run_logger.info(f"  Camera {camera_id + 1}: Not present (UID: {display_uid})")
                             self.configLog.emit(f"Camera {camera_id + 1}: Not present")
                         else:
-                            logger.info(f"  Camera {camera_id + 1}: UID = 0x{uid_hex}")
+                            logger.info(f"  Camera {camera_id + 1}: UID = {display_uid}")
                             if self._runlog_active:
-                                run_logger.info(f"  Camera {camera_id + 1}: UID = 0x{uid_hex}")
-                            # Emit to configLog for UI display during configuration phase
-                            self.configLog.emit(f"Camera {camera_id + 1} UID: 0x{uid_hex}")
+                                run_logger.info(f"  Camera {camera_id + 1}: UID = {display_uid}")
+                            self.configLog.emit(f"Camera {camera_id + 1} UID: {display_uid}")
                     except Exception as e:
                         logger.error(f"Error reading UID for camera {camera_id + 1} on {sensor_name} sensor: {e}")
                         if self._runlog_active:
@@ -1661,6 +1719,39 @@ class MOTIONConnector(QObject):
     @pyqtSlot(int, int)
     def startConfigureCameraSensors(self, left_camera_mask:int, right_camera_mask:int):
         if self._config_thread: return
+
+        # Power on cameras for each side before programming FPGAs (same as at scan start)
+        if(self._power_off_unused_cameras):
+            logger.info("Powering on cameras before programming FPGAs…")
+            sides_info = [
+                ("left", left_camera_mask, self.interface.sensors.get("left")),
+                ("right",right_camera_mask, self.interface.sensors.get("right")),
+            ]
+            for side, mask, sensor in sides_info:
+                if mask == 0 or not (sensor and sensor.is_connected()):
+                    continue
+                try:
+                    power_status = sensor.get_camera_power_status()
+                    if not power_status or len(power_status) != 8:
+                        logger.warning(f"{side}: could not get camera power status")
+                        continue
+                    off_mask = sum(1 << i for i in range(8) if power_status[i] and not (mask & (1 << i)))
+                    on_mask = mask & 0xFF
+                    if off_mask:
+                        if sensor.disable_camera_power(off_mask):
+                            logger.warning(f"{side}: powered off cameras not in mask (0x{off_mask:02X})")
+                        time.sleep(0.05)
+                    if on_mask:
+                        if sensor.enable_camera_power(on_mask):
+                            logger.warning(f"{side}: powered on cameras (mask 0x{on_mask:02X})")
+                        else:
+                            logger.warning(f"Failed to power on cameras on {side} (mask 0x{on_mask:02X}).")
+                            return
+                        time.sleep(0.5)
+                except Exception as e:
+                    logger.error(f"Error setting camera power for {side}: {e}")
+                    return
+
         w = _ConfigureWorker(self._interface, left_camera_mask, right_camera_mask)
         w.progress.connect(self.configProgress.emit)
         w.log.connect(self.configLog.emit)
