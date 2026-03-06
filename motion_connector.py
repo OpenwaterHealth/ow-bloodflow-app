@@ -314,8 +314,8 @@ class MOTIONConnector(QObject):
                         logger.info("Filled ID cache on %s sensor", side)
                         if(self._power_off_unused_cameras):
                             disable_power(0xFF)
-                        time.sleep(0.05)
-                        logger.info("Powered off all cameras on %s sensor", side)
+                            time.sleep(0.05)
+                            logger.info("Powered off all cameras on %s sensor", side)
                     else:
                         logger.warning("Could not power on cameras on %s sensor for ID cache fill", side)
                         refresh_cache()  # try anyway in case some cameras are already on
