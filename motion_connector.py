@@ -33,7 +33,7 @@ from omotion.config import (
     DEBUG_FLAG_FAKE_DATA,
     DEBUG_FLAG_HISTO_THROTTLE,
 )
-from processing.data_processing import DataProcessor, HISTO_BINS
+from omotion.MotionProcessing import HISTO_BINS, parse_stream_to_csv, process_bin_file
 from processing.visualize_bloodflow import VisualizeBloodflow
 from utils.resource_path import resource_path
 import numpy as np
@@ -2368,8 +2368,6 @@ class MOTIONConnector(QObject):
             right_csv = ""
 
             try:
-                proc = DataProcessor()
-
                 def _to_csv_path(p):
                     base, ext = os.path.splitext(p)
                     return base + ".csv" if base else ""
@@ -2379,7 +2377,7 @@ class MOTIONConnector(QObject):
                     self.postLog.emit(f"Processing LEFT: {os.path.basename(left_raw)}")
                     self.postProgress.emit(5)
                     left_csv = _to_csv_path(left_raw)
-                    proc.process_bin_file(left_raw, left_csv)
+                    process_bin_file(left_raw, left_csv)
                     self.postLog.emit(f"LEFT → {os.path.basename(left_csv)}")
                     self.postProgress.emit(50)
                 else:
@@ -2400,7 +2398,7 @@ class MOTIONConnector(QObject):
                     )
                     self.postProgress.emit(55)
                     right_csv = _to_csv_path(right_raw)
-                    proc.process_bin_file(right_raw, right_csv)
+                    process_bin_file(right_raw, right_csv)
                     self.postLog.emit(f"RIGHT → {os.path.basename(right_csv)}")
                     self.postProgress.emit(95)
                 else:
@@ -2477,9 +2475,6 @@ class MOTIONConnector(QObject):
 
                 # Buffer to accumulate incoming data
                 buffer_accumulator = bytearray()
-
-                # Parse and write data using the helper function
-                proc = DataProcessor()
 
                 def _extra_cols():
                     with self._telemetry_lock:
@@ -2564,7 +2559,7 @@ class MOTIONConnector(QObject):
                         # Don't let plotting errors break the writer thread
                         return
 
-                rows_written = proc.parse_stream_to_csv(
+                rows_written = parse_stream_to_csv(
                     q,
                     stop_evt,
                     csv_writer,
