@@ -17,8 +17,10 @@ try:
     from omotion.utils import util_crc16 as _crc16
 except ImportError:
     import binascii
+
     def _crc16(buf: memoryview) -> int:
         return binascii.crc_hqx(buf, 0xFFFF)
+
 
 # ─── Constants ──────────────────────────────────────────────
 HISTO_SIZE_WORDS = 1024
@@ -33,14 +35,16 @@ MIN_PACKET_SIZE = PACKET_HEADER_SIZE + PACKET_FOOTER_SIZE + HISTO_BLOCK_SIZE
 SOF, SOH, EOH, EOF = 0xAA, 0xFF, 0xEE, 0xDD
 
 # ─── Struct formats ─────────────────────────────────────────
-_U32  = struct.Struct("<I")
-_U16  = struct.Struct("<H")
-_F32  = struct.Struct("<f")
-_HDR  = struct.Struct("<BBI")
+_U32 = struct.Struct("<I")
+_U16 = struct.Struct("<H")
+_F32 = struct.Struct("<f")
+_HDR = struct.Struct("<BBI")
 _BLK_HEAD = struct.Struct("<BB")
+
 
 def _get_u32(buf: memoryview, offset: int) -> int:
     return _U32.unpack_from(buf, offset)[0]
+
 
 def _crc_matches(pkt: memoryview, crc_expected: int) -> bool:
     return _crc16(pkt) == crc_expected
@@ -49,8 +53,11 @@ def _crc_matches(pkt: memoryview, crc_expected: int) -> bool:
 class DataProcessor:
     """Parses raw histogram .bin files into CSV format."""
 
-    def parse_histogram_packet(self, pkt: memoryview) -> Tuple[
-        Dict[int, np.ndarray], Dict[int, int], Dict[int, float], Optional[float], int]:
+    def parse_histogram_packet(
+        self, pkt: memoryview
+    ) -> Tuple[
+        Dict[int, np.ndarray], Dict[int, int], Dict[int, float], Optional[float], int
+    ]:
         """Returns histograms, frame-ids, temperatures, optional timestamp (s), bytes_consumed."""
 
         if len(pkt) < MIN_PACKET_SIZE:
@@ -75,7 +82,7 @@ class DataProcessor:
         off = PACKET_HEADER_SIZE
 
         hists: Dict[int, np.ndarray] = {}
-        ids:   Dict[int, int] = {}
+        ids: Dict[int, int] = {}
         temps: Dict[int, float] = {}
         timestamp_sec: Optional[float] = None
 
@@ -92,9 +99,9 @@ class DataProcessor:
                 raise ValueError("Missing SOH")
             off += _BLK_HEAD.size
 
-            hist = np.frombuffer(mv, dtype=np.uint32,
-                                 count=HISTO_SIZE_WORDS,
-                                 offset=off)
+            hist = np.frombuffer(
+                mv, dtype=np.uint32, count=HISTO_SIZE_WORDS, offset=off
+            )
             off += HISTO_BYTES
 
             temp = _F32.unpack_from(mv, off)[0]
@@ -118,34 +125,44 @@ class DataProcessor:
         if mv[off] != EOF:
             raise ValueError("Missing EOF")
 
-        if not _crc_matches(mv[:off-3], crc_expected):
+        if not _crc_matches(mv[: off - 3], crc_expected):
             raise ValueError("CRC mismatch")
 
         return hists, ids, temps, timestamp_sec, pkt_len
 
-    def process_bin_file(self, src_bin: str, dst_csv: str,
-                         start_offset: int = 0,
-                         batch_rows: int = 4096) -> None:
+    def process_bin_file(
+        self, src_bin: str, dst_csv: str, start_offset: int = 0, batch_rows: int = 4096
+    ) -> None:
         """Convert binary → CSV."""
         with open(src_bin, "rb") as f:
             data = memoryview(f.read())
 
         total_bytes = len(data)
         off = start_offset
-        packet_ok = packet_fail = crc_failure = other_fail = bad_header_fail = error_count = 0
+        packet_ok = packet_fail = crc_failure = other_fail = bad_header_fail = (
+            error_count
+        ) = 0
         bad_header_packets = []
         out_buf: List[List] = []
 
         with open(dst_csv, "w", newline="") as fcsv:
             wr = csv.writer(fcsv)
             wr.writerow(
-                ["cam_id", "frame_id", "timestamp_s", *range(HISTO_SIZE_WORDS),
-                 "temperature", "sum"]
+                [
+                    "cam_id",
+                    "frame_id",
+                    "timestamp_s",
+                    *range(HISTO_SIZE_WORDS),
+                    "temperature",
+                    "sum",
+                ]
             )
 
             while off + MIN_PACKET_SIZE <= len(data):
                 try:
-                    hists, ids, temps, timestamp_sec, consumed = self.parse_histogram_packet(data[off:])
+                    hists, ids, temps, timestamp_sec, consumed = (
+                        self.parse_histogram_packet(data[off:])
+                    )
                     off += consumed
                     packet_ok += 1
 
@@ -153,8 +170,7 @@ class DataProcessor:
                     for cam, hist in hists.items():
                         row_sum = int(hist.sum(dtype=np.uint64))
                         out_buf.append(
-                            [cam, ids[cam], ts_val, *hist.tolist(),
-                             temps[cam], row_sum]
+                            [cam, ids[cam], ts_val, *hist.tolist(), temps[cam], row_sum]
                         )
 
                     if len(out_buf) >= batch_rows:
@@ -172,7 +188,7 @@ class DataProcessor:
                         other_fail += 1
 
                     # Resync
-                    pat = b"\xAA\x00\x41"
+                    pat = b"\xaa\x00\x41"
                     old_off = off
                     off = off + 1
                     nxt = data.obj.find(pat, off)
@@ -185,17 +201,27 @@ class DataProcessor:
             if out_buf:
                 wr.writerows(out_buf)
 
-        total_packets = packet_ok + packet_fail + crc_failure + other_fail + bad_header_fail
+        total_packets = (
+            packet_ok + packet_fail + crc_failure + other_fail + bad_header_fail
+        )
         print(f"Parsed {total_packets} packets, {packet_ok} OK")
 
-    def parse_stream_to_csv(self, q: queue.Queue, stop_evt: threading.Event, csv_writer, buffer_accumulator: bytearray, extra_cols_fn=None, on_row_fn=None):
+    def parse_stream_to_csv(
+        self,
+        q: queue.Queue,
+        stop_evt: threading.Event,
+        csv_writer,
+        buffer_accumulator: bytearray,
+        extra_cols_fn=None,
+        on_row_fn=None,
+    ):
         """
         Parse streaming binary data and write to CSV.
         This function is called to process data from the queue.
         Returns the number of rows written.
         """
         rows_written = 0
-        
+
         while not stop_evt.is_set() or not q.empty():
             try:
                 queue_size_before = q.qsize()
@@ -205,28 +231,45 @@ class DataProcessor:
                 q.task_done()
             except queue.Empty:
                 continue
-            
+
             # Try to parse packets from the accumulated buffer
             offset = 0
             while offset + MIN_PACKET_SIZE <= len(buffer_accumulator):
                 try:
                     pkt_view = memoryview(buffer_accumulator[offset:])
-                    hists, ids, temps, timestamp_sec, consumed = self.parse_histogram_packet(pkt_view)
+                    hists, ids, temps, timestamp_sec, consumed = (
+                        self.parse_histogram_packet(pkt_view)
+                    )
                     offset += consumed
                     # Write CSV rows for each camera in this packet
                     ts_val = timestamp_sec if timestamp_sec is not None else 0.0
                     for cam_id, hist in hists.items():
                         row_sum = int(hist.sum(dtype=np.uint64))
                         extra_cols = extra_cols_fn() if extra_cols_fn else []
-                        row = [cam_id, ids[cam_id], ts_val, *hist.tolist(), temps[cam_id], row_sum, *extra_cols]
+                        row = [
+                            cam_id,
+                            ids[cam_id],
+                            ts_val,
+                            *hist.tolist(),
+                            temps[cam_id],
+                            row_sum,
+                            *extra_cols,
+                        ]
                         csv_writer.writerow(row)
                         rows_written += 1
                         if on_row_fn:
-                            on_row_fn(cam_id, ids[cam_id], ts_val, hist, row_sum, temps[cam_id])
-                        
+                            on_row_fn(
+                                cam_id,
+                                ids[cam_id],
+                                ts_val,
+                                hist,
+                                row_sum,
+                                temps[cam_id],
+                            )
+
                 except ValueError as e:
                     # Try to resync on error
-                    pat = b"\xAA\x00\x41"
+                    pat = b"\xaa\x00\x41"
                     old_off = offset
                     offset += 1
                     nxt = buffer_accumulator.find(pat, offset)
@@ -237,14 +280,14 @@ class DataProcessor:
                     else:
                         # Can't find next packet, wait for more data
                         break
-            
+
             # Remove processed data from buffer
             if offset > 0:
                 del buffer_accumulator[:offset]
-        
+
         return rows_written
 
-    
+
 def main():
     parser = argparse.ArgumentParser(description="Process histogram .bin to .csv")
     parser.add_argument("--file", "-f", required=True, help="Input .bin file")
@@ -252,7 +295,9 @@ def main():
     args = parser.parse_args()
 
     input_file = args.file
-    output_file = args.output if args.output else os.path.splitext(input_file)[0] + ".csv"
+    output_file = (
+        args.output if args.output else os.path.splitext(input_file)[0] + ".csv"
+    )
 
     processor = DataProcessor()
     processor.process_bin_file(input_file, output_file)
