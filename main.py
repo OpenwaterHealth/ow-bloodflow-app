@@ -14,6 +14,7 @@ from PyQt6.QtCore import qInstallMessageHandler, QtMsgType
 from qasync import QEventLoop
 
 from motion_connector import MOTIONConnector
+from omotion.Interface import MOTIONInterface
 from utils.single_instance import check_single_instance, cleanup_single_instance
 from version import get_version
 from utils.resource_path import resource_path
@@ -178,7 +179,9 @@ def main():
     if my_args.advanced_sensors:
         app_config["advancedSensors"] = True
 
+    interface = MOTIONInterface()
     connector = MOTIONConnector(
+        interface=interface,
         advanced_sensors=app_config.get("advancedSensors", True),
         force_laser_fail=app_config.get("forceLaserFail", False),
         camera_temp_alert_threshold_c=app_config.get("cameraTempAlertThresholdC", 105),
