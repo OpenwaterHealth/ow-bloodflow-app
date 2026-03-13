@@ -33,7 +33,11 @@ from omotion.config import (
     DEBUG_FLAG_FAKE_DATA,
     DEBUG_FLAG_HISTO_THROTTLE,
 )
-from omotion.MotionProcessing import HISTO_BINS, parse_stream_to_csv, process_bin_file
+from omotion.MotionProcessing import (
+    HISTO_BINS,
+    process_bin_file,
+    stream_queue_to_csv_file,
+)
 from processing.visualize_bloodflow import VisualizeBloodflow
 from utils.resource_path import resource_path
 import numpy as np
@@ -1250,9 +1254,118 @@ class MOTIONConnector(QObject):
 
                     filename = f"scan_{subject_id}_{ts}_{side}_mask{mask:02X}.csv"
                     filepath = os.path.join(data_dir, filename)
+
+                    def _extra_cols():
+                        with self._telemetry_lock:
+                            return [
+                                int(self._tcm),
+                                int(self._tcl),
+                                f"{float(self._pdc):.3f}",
+                            ]
+
+                    def _make_on_row(current_side: str):
+                        temp_alerted = set()
+
+                        def _on_row(cam_id, frame_id, ts_val, hist, row_sum, temp):
+                            try:
+                                # Alert (and log) if camera temperature reaches threshold; do not interrupt scan
+                                threshold = self._camera_temp_alert_threshold_c
+                                if temp >= threshold and cam_id not in temp_alerted:
+                                    temp_alerted.add(cam_id)
+                                    msg = f"ALERT: Camera {cam_id + 1} ({current_side}) temperature {temp:.1f}°C >= {threshold:.0f}°C threshold."
+                                    self.captureLog.emit(msg)
+                                    run_logger.warning(msg)
+                                    logger.warning(msg)
+                                if row_sum > 0:
+                                    mean_val = float(np.dot(hist, HISTO_BINS) / row_sum)
+                                else:
+                                    mean_val = 0.0
+                                if row_sum > 0 and mean_val > 0:
+                                    mean2 = float(np.dot(hist, HISTO_BINS_SQ) / row_sum)
+                                    var = max(0.0, mean2 - (mean_val * mean_val))
+                                    std = math.sqrt(var)
+                                    contrast = std / mean_val if mean_val > 0 else 0.0
+                                else:
+                                    contrast = 0.0
+
+                                module_idx = 0 if current_side == "left" else 1
+                                cam_pos = int(cam_id) % 8
+                                if (
+                                    module_idx >= _BFI_C_MIN.shape[0]
+                                    or cam_pos >= _BFI_C_MIN.shape[1]
+                                ):
+                                    bfi_val = contrast * 10.0
+                                else:
+                                    cmin = float(_BFI_C_MIN[module_idx, cam_pos])
+                                    cmax = float(_BFI_C_MAX[module_idx, cam_pos])
+                                    cden = (cmax - cmin) or 1.0
+                                    bfi_val = (1.0 - ((contrast - cmin) / cden)) * 10.0
+                                if (
+                                    module_idx >= _BFI_I_MIN.shape[0]
+                                    or cam_pos >= _BFI_I_MIN.shape[1]
+                                ):
+                                    bvi_val = mean_val * 10.0
+                                else:
+                                    imin = float(_BFI_I_MIN[module_idx, cam_pos])
+                                    imax = float(_BFI_I_MAX[module_idx, cam_pos])
+                                    iden = (imax - imin) or 1.0
+                                    bvi_val = (1.0 - ((mean_val - imin) / iden)) * 10.0
+                                timestamp = float(ts_val) if ts_val else time.time()
+                                self.scanMeanSampled.emit(
+                                    current_side, int(cam_id), float(timestamp), mean_val
+                                )
+                                self.scanContrastSampled.emit(
+                                    current_side,
+                                    int(cam_id),
+                                    float(timestamp),
+                                    float(contrast),
+                                )
+                                self.scanBfiSampled.emit(
+                                    current_side,
+                                    int(cam_id),
+                                    float(timestamp),
+                                    float(bfi_val),
+                                )
+                                self.scanBviSampled.emit(
+                                    current_side,
+                                    int(cam_id),
+                                    float(timestamp),
+                                    float(bvi_val),
+                                )
+                                self._corr_queue.put(
+                                    (
+                                        current_side,
+                                        int(cam_id),
+                                        float(timestamp),
+                                        mean_val,
+                                        float(bfi_val),
+                                        float(bvi_val),
+                                    )
+                                )
+                            except Exception:
+                                # Don't let plotting errors break the writer thread
+                                return
+
+                        return _on_row
+
+                    on_row = _make_on_row(side)
+
                     t = threading.Thread(
-                        target=self._write_stream_to_file,
-                        args=(q, stop_evt, filepath, side),
+                        target=stream_queue_to_csv_file,
+                        kwargs={
+                            "q": q,
+                            "stop_evt": stop_evt,
+                            "filename": filepath,
+                            "extra_headers": ["tcm", "tcl", "pdc"],
+                            "extra_cols_fn": _extra_cols,
+                            "on_row_fn": on_row,
+                            "on_complete_fn": lambda rows, fn=filename: logger.info(
+                                "Wrote %s rows to %s", rows, fn
+                            ),
+                            "on_error_fn": lambda e, fn=filename: self.captureLog.emit(
+                                f"Writer error ({fn}): {e}"
+                            ),
+                        },
                         daemon=True,
                     )
                     t.start()
@@ -2446,133 +2559,6 @@ class MOTIONConnector(QObject):
         """Handle incoming data from the LIFU device."""
         logger.info(f"Data received from {descriptor}: {message}")
         self.signalDataReceived.emit(descriptor, message)
-
-    def _write_stream_to_file(
-        self, q: queue.Queue, stop_evt: threading.Event, filename: str, side: str
-    ):
-        """
-        Parse streaming binary data and write to CSV file.
-        Uses the parser from parse_data_v2.py to convert binary packets to CSV rows.
-        """
-        try:
-            # Open CSV file for writing
-            with open(filename, "w", newline="") as f:
-                csv_writer = csv.writer(f)
-                # Write CSV header
-                csv_writer.writerow(
-                    [
-                        "cam_id",
-                        "frame_id",
-                        "timestamp_s",
-                        *range(1024),
-                        "temperature",
-                        "sum",
-                        "tcm",
-                        "tcl",
-                        "pdc",
-                    ]
-                )
-
-                # Buffer to accumulate incoming data
-                buffer_accumulator = bytearray()
-
-                def _extra_cols():
-                    with self._telemetry_lock:
-                        return [
-                            int(self._tcm),
-                            int(self._tcl),
-                            f"{float(self._pdc):.3f}",
-                        ]
-
-                _temp_alerted = (
-                    set()
-                )  # cam_ids that have already triggered 105°C alert this scan
-
-                def _on_row(cam_id, frame_id, ts_val, hist, row_sum, temp):
-                    try:
-                        # Alert (and log) if camera temperature reaches threshold; do not interrupt scan
-                        threshold = self._camera_temp_alert_threshold_c
-                        if temp >= threshold and cam_id not in _temp_alerted:
-                            _temp_alerted.add(cam_id)
-                            msg = f"ALERT: Camera {cam_id + 1} ({side}) temperature {temp:.1f}°C >= {threshold:.0f}°C threshold."
-                            self.captureLog.emit(msg)
-                            run_logger.warning(msg)
-                            logger.warning(msg)
-                        if row_sum > 0:
-                            mean_val = float(np.dot(hist, HISTO_BINS) / row_sum)
-                        else:
-                            mean_val = 0.0
-                        if row_sum > 0 and mean_val > 0:
-                            mean2 = float(np.dot(hist, HISTO_BINS_SQ) / row_sum)
-                            var = max(0.0, mean2 - (mean_val * mean_val))
-                            std = math.sqrt(var)
-                            contrast = std / mean_val if mean_val > 0 else 0.0
-                        else:
-                            contrast = 0.0
-
-                        module_idx = 0 if side == "left" else 1
-                        cam_pos = int(cam_id) % 8
-                        if (
-                            module_idx >= _BFI_C_MIN.shape[0]
-                            or cam_pos >= _BFI_C_MIN.shape[1]
-                        ):
-                            bfi_val = contrast * 10.0
-                        else:
-                            cmin = float(_BFI_C_MIN[module_idx, cam_pos])
-                            cmax = float(_BFI_C_MAX[module_idx, cam_pos])
-                            cden = (cmax - cmin) or 1.0
-                            bfi_val = (1.0 - ((contrast - cmin) / cden)) * 10.0
-                        if (
-                            module_idx >= _BFI_I_MIN.shape[0]
-                            or cam_pos >= _BFI_I_MIN.shape[1]
-                        ):
-                            bvi_val = mean_val * 10.0
-                        else:
-                            imin = float(_BFI_I_MIN[module_idx, cam_pos])
-                            imax = float(_BFI_I_MAX[module_idx, cam_pos])
-                            iden = (imax - imin) or 1.0
-                            bvi_val = (1.0 - ((mean_val - imin) / iden)) * 10.0
-                        timestamp = float(ts_val) if ts_val else time.time()
-                        self.scanMeanSampled.emit(
-                            side, int(cam_id), float(timestamp), mean_val
-                        )
-                        self.scanContrastSampled.emit(
-                            side, int(cam_id), float(timestamp), float(contrast)
-                        )
-                        self.scanBfiSampled.emit(
-                            side, int(cam_id), float(timestamp), float(bfi_val)
-                        )
-                        self.scanBviSampled.emit(
-                            side, int(cam_id), float(timestamp), float(bvi_val)
-                        )
-                        self._corr_queue.put(
-                            (
-                                side,
-                                int(cam_id),
-                                float(timestamp),
-                                mean_val,
-                                float(bfi_val),
-                                float(bvi_val),
-                            )
-                        )
-                    except Exception:
-                        # Don't let plotting errors break the writer thread
-                        return
-
-                rows_written = parse_stream_to_csv(
-                    q,
-                    stop_evt,
-                    csv_writer,
-                    buffer_accumulator,
-                    extra_cols_fn=_extra_cols,
-                    on_row_fn=_on_row,
-                )
-
-                logger.info(f"Wrote {rows_written} rows to {filename}")
-
-        except Exception as e:
-            self.captureLog.emit(f"Writer error ({filename}): {e}")
-            logger.error(f"Writer error ({filename}): {e}", exc_info=True)
 
     def connect_signals(self):
         """Connect LIFUInterface signals to QML."""
