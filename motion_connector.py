@@ -32,7 +32,7 @@ from omotion.config import (
     DEBUG_FLAG_HISTO_THROTTLE,
 )
 from omotion.MotionProcessing import process_bin_file
-from omotion.ScanWorkflow import ScanRequest
+from omotion.ScanWorkflow import ConfigureRequest, ScanRequest
 from processing.visualize_bloodflow import VisualizeBloodflow
 from utils.resource_path import resource_path
 import numpy as np
@@ -171,7 +171,7 @@ class MOTIONConnector(QObject):
         self._leftSensorConnected = left_sensor_connected
         self._rightSensorConnected = right_sensor_connected
         self._consoleConnected = console_connected
-        self._config_thread = None
+        self._config_running = False
         self._laserOn = False
         self._safetyFailure = False
         self._running = False
@@ -1874,69 +1874,31 @@ class MOTIONConnector(QObject):
     def startConfigureCameraSensors(
         self, left_camera_mask: int, right_camera_mask: int
     ):
-        if self._config_thread:
+        if self._config_running:
             return
-
-        # Power on cameras for each side before programming FPGAs (same as at scan start)
-        if self._power_off_unused_cameras:
-            logger.info("Powering on cameras before programming FPGAs…")
-            sides_info = [
-                ("left", left_camera_mask, self.interface.sensors.get("left")),
-                ("right", right_camera_mask, self.interface.sensors.get("right")),
-            ]
-            for side, mask, sensor in sides_info:
-                if mask == 0 or not (sensor and sensor.is_connected()):
-                    continue
-                try:
-                    power_status = sensor.get_camera_power_status()
-                    if not power_status or len(power_status) != 8:
-                        logger.warning(f"{side}: could not get camera power status")
-                        continue
-                    off_mask = sum(
-                        1 << i
-                        for i in range(8)
-                        if power_status[i] and not (mask & (1 << i))
-                    )
-                    on_mask = mask & 0xFF
-                    if off_mask:
-                        if sensor.disable_camera_power(off_mask):
-                            logger.warning(
-                                f"{side}: powered off cameras not in mask (0x{off_mask:02X})"
-                            )
-                        time.sleep(0.05)
-                    if on_mask:
-                        if sensor.enable_camera_power(on_mask):
-                            logger.warning(
-                                f"{side}: powered on cameras (mask 0x{on_mask:02X})"
-                            )
-                        else:
-                            logger.warning(
-                                f"Failed to power on cameras on {side} (mask 0x{on_mask:02X})."
-                            )
-                            return
-                        time.sleep(0.5)
-                except Exception as e:
-                    logger.error(f"Error setting camera power for {side}: {e}")
-                    return
-
-        w = _ConfigureWorker(self._interface, left_camera_mask, right_camera_mask)
-        w.progress.connect(self.configProgress.emit)
-        w.log.connect(self.configLog.emit)
-        w.finished.connect(self._on_config_finished)
-        self._config_thread = w
-        w.start()
+        self._config_running = True
+        req = ConfigureRequest(
+            left_camera_mask=left_camera_mask,
+            right_camera_mask=right_camera_mask,
+            power_off_unused_cameras=bool(self._power_off_unused_cameras),
+        )
+        started = self._interface.start_configure_camera_sensors(
+            req,
+            on_progress_fn=lambda pct: self.configProgress.emit(int(pct)),
+            on_log_fn=lambda msg: self.configLog.emit(msg),
+            on_complete_fn=self._on_config_finished,
+        )
+        if not started:
+            self._config_running = False
 
     @pyqtSlot()
     def cancelConfigureCameraSensors(self):
-        if self._config_thread:
-            self._config_thread.stop()
+        if self._config_running:
+            self._interface.cancel_configure_camera_sensors()
 
-    def _on_config_finished(self, ok: bool, err: str):
-        if self._config_thread:
-            self._config_thread.quit()
-            self._config_thread.wait(2000)
-            self._config_thread = None
-        self.configFinished.emit(ok, err)
+    def _on_config_finished(self, result):
+        self._config_running = False
+        self.configFinished.emit(bool(result.ok), result.error or "")
 
     @pyqtSlot(str)
     def querySensorAccelerometer(self, target: str):
@@ -2422,120 +2384,6 @@ class _VizWorker(QObject):
             self.finished.emit()
         except Exception as e:
             self.error.emit(str(e))
-
-
-# --- worker to run config off the GUI thread ---
-class _ConfigureWorker(QThread):
-    progress = pyqtSignal(int)
-    log = pyqtSignal(str)
-    finished = pyqtSignal(bool, str)
-
-    def __init__(self, interface, left_camera_mask: int, right_camera_mask: int):
-        super().__init__()
-        self.interface = interface
-        self.left_camera_mask = left_camera_mask
-        self.right_camera_mask = right_camera_mask
-        self._stop = False
-
-    def stop(self):
-        self._stop = True
-
-    def run(self):
-        # Log masks for both modules
-        logger.info(
-            f"[Connector] configure worker "
-            f"left mask=0x{self.left_camera_mask:02X} "
-            f"right mask=0x{self.right_camera_mask:02X}"
-        )
-
-        # Build (side, position) tasks based on masks
-        left_positions = [i for i in range(8) if (self.left_camera_mask & (1 << i))]
-        right_positions = [i for i in range(8) if (self.right_camera_mask & (1 << i))]
-
-        if not left_positions and not right_positions:
-            self.finished.emit(False, "Empty camera masks (left & right)")
-            return
-
-        tasks = [("left", p) for p in left_positions] + [
-            ("right", p) for p in right_positions
-        ]
-
-        # Each task has two steps: program_fpga and camera_configure_registers
-        total = len(tasks) * 2
-        done = 0
-
-        for side, pos in tasks:
-            if self._stop:
-                self.finished.emit(False, "Canceled")
-                return
-
-            cam_mask_single = 1 << pos
-            pos1 = pos + 1  # human-friendly position
-            # 1) Program FPGA
-            msg = f"Programming {side} camera FPGA at position {pos1} (mask 0x{cam_mask_single:02X})…"
-            logger.info(msg)
-            self.log.emit(msg)
-
-            results = self.interface.run_on_sensors(
-                "program_fpga",
-                camera_position=cam_mask_single,
-                manual_process=False,
-                target=side,  # <-- Only this module
-            )
-
-            # Expect a dict like {'left': True} or {'right': True}
-            if isinstance(results, dict):
-                ok = results.get(side, False)
-                if not ok:
-                    err = f"Failed to program FPGA on {side} sensor (pos {pos1})."
-                    logger.error(err)
-                    self.log.emit(err)
-                    self.finished.emit(False, err)
-                    return
-            elif results is not True:  # In case your interface returns a bare bool
-                err = f"program_fpga unexpected: {results!r}"
-                logger.error(err)
-                self.log.emit(err)
-                self.finished.emit(False, err)
-                return
-
-            done += 1
-            self.progress.emit(int(5 + (done / total) * 15))
-
-            if self._stop:
-                self.finished.emit(False, "Canceled")
-                return
-            time.sleep(0.1)
-            # 2) Configure camera registers
-            msg = f"Configuring {side} camera sensor registers at position {pos1}…"
-            logger.info(msg)
-            self.log.emit(msg)
-
-            cfg_results = self.interface.run_on_sensors(
-                "camera_configure_registers",
-                camera_position=cam_mask_single,
-                target=side,  # <-- Only this module
-            )
-
-            # Accept dict {'left': True} or a bare True
-            cfg_ok = False
-            if isinstance(cfg_results, dict):
-                cfg_ok = bool(cfg_results.get(side))
-            else:
-                cfg_ok = bool(cfg_results)
-
-            if not cfg_ok:
-                err = f"camera_configure_registers failed on {side} at position {pos1}: {cfg_results!r}"
-                logger.error(err)
-                self.log.emit(err)
-                self.finished.emit(False, err)
-                return
-
-            done += 1
-            self.progress.emit(int(5 + (done / total) * 15))
-
-        logger.info("FPGAs programmed & registers configured")
-        self.finished.emit(True, "")
 
 
 # --- Console Status Thread ---
