@@ -13,7 +13,6 @@ from pathlib import Path
 import logging
 import base58
 import threading
-import queue
 import json
 import csv
 import os
@@ -32,11 +31,8 @@ from omotion.config import (
     DEBUG_FLAG_FAKE_DATA,
     DEBUG_FLAG_HISTO_THROTTLE,
 )
-from omotion.MotionProcessing import (
-    create_realtime_processing_pipeline,
-    process_bin_file,
-    stream_queue_to_csv_file,
-)
+from omotion.MotionProcessing import process_bin_file
+from omotion.ScanWorkflow import ScanRequest
 from processing.visualize_bloodflow import VisualizeBloodflow
 from utils.resource_path import resource_path
 import numpy as np
@@ -151,6 +147,7 @@ class MOTIONConnector(QObject):
     ):
         super().__init__(parent)
         self._interface = motion_interface
+        self._scan_workflow = self._interface.scan_workflow
         self._advanced_sensors = advanced_sensors
         self._force_laser_fail = force_laser_fail
         self._camera_temp_alert_threshold_c = float(camera_temp_alert_threshold_c)
@@ -198,6 +195,9 @@ class MOTIONConnector(QObject):
         self._capture_left_path = ""
         self._capture_right_path = ""
         self._scan_notes = ""
+        self._scan_workflow.set_realtime_calibration(
+            _BFI_C_MIN, _BFI_C_MAX, _BFI_I_MIN, _BFI_I_MAX
+        )
         self.connect_signals()
         self._viz_thread = None
         self._viz_worker = None
@@ -874,10 +874,10 @@ class MOTIONConnector(QObject):
 
         self._capture_stop.set()
         try:
-            if self._interface and self._interface.console_module:
-                self._interface.console_module.stop_trigger()
-                self._trigger_state = "OFF"
-                self.triggerStateChanged.emit()
+            if self._interface:
+                self._interface.cancel_scan()
+            self._trigger_state = "OFF"
+            self.triggerStateChanged.emit()
         except Exception as e:
             logger.warning("Error stopping trigger: %s", e)
 
@@ -886,29 +886,6 @@ class MOTIONConnector(QObject):
         except Exception as e:
             logger.warning("Error stopping run log: %s", e)
 
-        try:
-            if self._interface and self._interface.sensors:
-                interface = self._interface
-                for side in ("left", "right"):
-                    sensor = interface.sensors.get(side)
-                    if sensor and sensor.is_connected():
-                        try:
-                            interface.run_on_sensors(
-                                "disable_camera", 0xFF, target=side
-                            )
-                            if hasattr(sensor, "uart") and hasattr(
-                                sensor.uart, "histo"
-                            ):
-                                sensor.uart.histo.stop_streaming()
-                        except Exception as e:
-                            logger.warning("Error disabling cameras on %s: %s", side, e)
-        except Exception as e:
-            logger.warning("Error disabling cameras: %s", e)
-
-        if self._capture_thread and self._capture_thread.is_alive():
-            self._capture_thread.join(timeout=5.0)
-            if self._capture_thread and self._capture_thread.is_alive():
-                logger.warning("Capture thread did not finish within 5s timeout")
         self._capture_thread = None
 
     @pyqtSlot()
@@ -1143,320 +1120,144 @@ class MOTIONConnector(QObject):
             )
             return False
 
-        # sanitize/prepare
         try:
             os.makedirs(data_dir, exist_ok=True)
         except Exception as e:
             self.captureLog.emit(f"Failed to create data dir: {e}")
             return False
 
-        # Determine which sides we will actually capture (mask != 0 and sensor connected)
-        interface = self._interface
-        sides_info = [
-            ("left", left_camera_mask, interface.sensors.get("left")),
-            ("right", right_camera_mask, interface.sensors.get("right")),
-        ]
-        active_sides = []
-        for side, mask, sensor in sides_info:
-            if mask == 0x00:
-                logger.info(f"{side} mask is 0x00 — skipping {side} capture.")
-                continue
-            if not (sensor and sensor.is_connected()):
-                logger.warning(
-                    f"{side} sensor not connected — skipping {side} capture."
-                )
-                continue
-            active_sides.append((side, mask, sensor))
-
-        if not active_sides:
-            self.captureLog.emit(
-                "No active sensors to capture (both masks 0x00 or disconnected)."
-            )
-            return False
-
-        logger.info("Capture worker thread starting…")
         self._capture_stop = threading.Event()
         self._capture_running = True
         self._capture_left_path = ""
         self._capture_right_path = ""
+        self._start_runlog(subject_id=subject_id)
 
-        def _ok_from_result(result, side: str) -> bool:
-            # Accept either {'left': True} or a bare True
-            if isinstance(result, dict):
-                return bool(result.get(side))
-            return bool(result)
+        def _extra_cols():
+            with self._telemetry_lock:
+                return [
+                    int(self._tcm),
+                    int(self._tcl),
+                    f"{float(self._pdc):.3f}",
+                ]
 
-        def _worker():
-            ok = False
-            err = ""
-            left_path = ""
-            right_path = ""
+        temp_alerted_by_side = {"left": set(), "right": set()}
 
-            try:
-                # Start the per-run log now before any other logging
-                self._start_runlog(subject_id=subject_id)
+        def _on_sample(sample):
+            current_side = sample.side
+            alerted = temp_alerted_by_side.setdefault(current_side, set())
+            threshold = self._camera_temp_alert_threshold_c
+            if sample.temperature_c >= threshold and sample.cam_id not in alerted:
+                alerted.add(sample.cam_id)
+                msg = (
+                    f"ALERT: Camera {sample.cam_id + 1} ({current_side}) "
+                    f"temperature {sample.temperature_c:.1f}°C >= {threshold:.0f}°C threshold."
+                )
+                self.captureLog.emit(msg)
+                run_logger.warning(msg)
+                logger.warning(msg)
 
-                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                logger.info("Preparing capture…")
-                self.captureLog.emit("Preparing capture…")
+            self.scanMeanSampled.emit(
+                current_side,
+                int(sample.cam_id),
+                float(sample.timestamp_s),
+                float(sample.mean),
+            )
+            self.scanContrastSampled.emit(
+                current_side,
+                int(sample.cam_id),
+                float(sample.timestamp_s),
+                float(sample.contrast),
+            )
+            self.scanBfiSampled.emit(
+                current_side,
+                int(sample.cam_id),
+                float(sample.timestamp_s),
+                float(sample.bfi),
+            )
+            self.scanBviSampled.emit(
+                current_side,
+                int(sample.cam_id),
+                float(sample.timestamp_s),
+                float(sample.bvi),
+            )
 
-                # Frame sync only for active sides (if using external sync)
-                if not disable_laser:
-                    logger.info("Enabling external frame sync…")
-                    self.captureLog.emit("Enabling external frame sync…")
-                    for side, _, _ in active_sides:
-                        res = interface.run_on_sensors(
-                            "enable_camera_fsin_ext", target=side
-                        )
-                        if not _ok_from_result(res, side):
-                            logger.error(
-                                f"Failed to enable external frame sync on {side}."
-                            )
-                            err = f"Failed to enable external frame sync on {side}."
-                            self.captureLog.emit(err)
-                            raise RuntimeError(err)
-                time.sleep(0.1)
-                # Enable cameras per side with that side's mask
-                logger.info("Enabling cameras…")
-                self.captureLog.emit("Enabling cameras…")
-                for side, mask, _ in active_sides:
-                    res = interface.run_on_sensors("enable_camera", mask, target=side)
-                    if not _ok_from_result(res, side):
-                        logger.error(
-                            f"Failed to enable camera on {side} (mask 0x{mask:02X})."
-                        )
-                        err = f"Failed to enable camera on {side} (mask 0x{mask:02X})."
-                        self.captureLog.emit(err)
-                        raise RuntimeError(err)
+        def _on_corrected(sample):
+            self.scanBfiCorrectedSampled.emit(
+                sample.side,
+                int(sample.cam_id),
+                float(sample.timestamp_s),
+                float(sample.bfi_corrected),
+            )
+            self.scanBviCorrectedSampled.emit(
+                sample.side,
+                int(sample.cam_id),
+                float(sample.timestamp_s),
+                float(sample.bvi_corrected),
+            )
 
-                # Setup streaming per active side
-                writer_threads: dict[str, threading.Thread] = {}
-                writer_stops: dict[str, threading.Event] = {}
-                processing_pipelines = {}
-
-                # If payload size depends on enabled cameras, compute here; otherwise keep constant.
-                expected_size = 32837  # TODO: adjust if payload varies with mask
-
-                logger.info("Setup streaming per active side")
-                for side, mask, sensor in active_sides:
-                    q = queue.Queue()
-                    stop_evt = threading.Event()
-                    # Start device streaming into queue
-                    sensor.uart.histo.start_streaming(q, expected_size=expected_size)
-
-                    filename = f"scan_{subject_id}_{ts}_{side}_mask{mask:02X}.csv"
-                    filepath = os.path.join(data_dir, filename)
-
-                    def _extra_cols():
-                        with self._telemetry_lock:
-                            return [
-                                int(self._tcm),
-                                int(self._tcl),
-                                f"{float(self._pdc):.3f}",
-                            ]
-
-                    def _make_sample_callback(current_side: str):
-                        temp_alerted = set()
-
-                        def _on_sample(sample):
-                            threshold = self._camera_temp_alert_threshold_c
-                            if (
-                                sample.temperature_c >= threshold
-                                and sample.cam_id not in temp_alerted
-                            ):
-                                temp_alerted.add(sample.cam_id)
-                                msg = (
-                                    f"ALERT: Camera {sample.cam_id + 1} ({current_side}) "
-                                    f"temperature {sample.temperature_c:.1f}°C >= {threshold:.0f}°C threshold."
-                                )
-                                self.captureLog.emit(msg)
-                                run_logger.warning(msg)
-                                logger.warning(msg)
-
-                            self.scanMeanSampled.emit(
-                                current_side,
-                                int(sample.cam_id),
-                                float(sample.timestamp_s),
-                                float(sample.mean),
-                            )
-                            self.scanContrastSampled.emit(
-                                current_side,
-                                int(sample.cam_id),
-                                float(sample.timestamp_s),
-                                float(sample.contrast),
-                            )
-                            self.scanBfiSampled.emit(
-                                current_side,
-                                int(sample.cam_id),
-                                float(sample.timestamp_s),
-                                float(sample.bfi),
-                            )
-                            self.scanBviSampled.emit(
-                                current_side,
-                                int(sample.cam_id),
-                                float(sample.timestamp_s),
-                                float(sample.bvi),
-                            )
-
-                        return _on_sample
-
-                    def _make_corrected_callback(current_side: str):
-                        def _on_corrected(sample):
-                            self.scanBfiCorrectedSampled.emit(
-                                current_side,
-                                int(sample.cam_id),
-                                float(sample.timestamp_s),
-                                float(sample.bfi_corrected),
-                            )
-                            self.scanBviCorrectedSampled.emit(
-                                current_side,
-                                int(sample.cam_id),
-                                float(sample.timestamp_s),
-                                float(sample.bvi_corrected),
-                            )
-
-                        return _on_corrected
-
-                    pipeline = create_realtime_processing_pipeline(
-                        side=side,
-                        bfi_c_min=_BFI_C_MIN,
-                        bfi_c_max=_BFI_C_MAX,
-                        bfi_i_min=_BFI_I_MIN,
-                        bfi_i_max=_BFI_I_MAX,
-                        on_sample_fn=_make_sample_callback(side),
-                        on_corrected_fn=_make_corrected_callback(side),
+        def _on_complete(result):
+            if result.ok:
+                self.captureLog.emit("Capture session complete.")
+                try:
+                    notes_filename = (
+                        f"scan_{subject_id}_{result.scan_timestamp}_notes.txt"
                     )
-                    processing_pipelines[side] = pipeline
+                    notes_path = os.path.join(data_dir, notes_filename)
+                    with open(notes_path, "w", encoding="utf-8") as nf:
+                        nf.write(self._scan_notes.strip() + "\n")
+                    logger.info(f"Saved scan notes to {notes_path}")
+                except Exception as e:
+                    logger.error(f"Failed to save scan notes: {e}")
+                try:
+                    self._log_scan_image_stats(result.left_path, result.right_path)
+                except Exception as e:
+                    logger.error(f"Failed to compute scan image stats: {e}")
+            else:
+                if result.error:
+                    self.captureLog.emit(f"Capture error: {result.error}")
 
-                    def _make_ingest_callback(p):
-                        def _ingest_row(cam_id, frame_id, ts_val, hist, row_sum, temp):
-                            p.enqueue(cam_id, frame_id, ts_val, hist, row_sum, temp)
+            self._capture_left_path = result.left_path
+            self._capture_right_path = result.right_path
+            self._capture_running = False
+            self._safety_cancel_scheduled = False
+            self._capture_thread = None
+            self.captureFinished.emit(
+                bool(result.ok), result.error or "", result.left_path, result.right_path
+            )
+            self._stop_runlog()
 
-                        return _ingest_row
+        req = ScanRequest(
+            subject_id=subject_id,
+            duration_sec=duration_sec,
+            left_camera_mask=left_camera_mask,
+            right_camera_mask=right_camera_mask,
+            data_dir=data_dir,
+            disable_laser=disable_laser,
+        )
 
-                    t = threading.Thread(
-                        target=stream_queue_to_csv_file,
-                        kwargs={
-                            "q": q,
-                            "stop_evt": stop_evt,
-                            "filename": filepath,
-                            "extra_headers": ["tcm", "tcl", "pdc"],
-                            "extra_cols_fn": _extra_cols,
-                            "on_row_fn": _make_ingest_callback(pipeline),
-                            "on_complete_fn": lambda rows, fn=filename: logger.info(
-                                "Wrote %s rows to %s", rows, fn
-                            ),
-                            "on_error_fn": lambda e, fn=filename: self.captureLog.emit(
-                                f"Writer error ({fn}): {e}"
-                            ),
-                        },
-                        daemon=True,
-                    )
-                    t.start()
+        def _on_trigger_state(state: str):
+            self._trigger_state = state
+            self.triggerStateChanged.emit()
 
-                    writer_threads[side] = t
-                    writer_stops[side] = stop_evt
-                    if side == "left":
-                        left_path = filepath
-                    elif side == "right":
-                        right_path = filepath
-                    self.captureLog.emit(f"[{side.upper()}] Streaming to: {filename}")
-
-                self._capture_left_path = left_path
-                self._capture_right_path = right_path
-
-                # Start trigger (once)
-                self.captureLog.emit("Starting trigger…")
-                if not interface.console_module.start_trigger():
-                    err = "Failed to start trigger."
-                    self.captureLog.emit(err)
-                    raise RuntimeError(err)
-
-                logger.info("TRIGGER STARTED")
-
-                self._trigger_state = "ON"
-                self.triggerStateChanged.emit()
-
-                # Progress loop
-                start_t = time.time()
-                last_emit = -1
-                while not self._capture_stop.is_set():
-                    elapsed = time.time() - start_t
-                    pct = int(min(100, max(0, (elapsed / max(1, duration_sec)) * 100)))
-                    if pct != last_emit:
-                        self.captureProgress.emit(pct if pct >= 1 else 1)
-                        last_emit = pct
-                    if elapsed >= duration_sec:
-                        break
-                    time.sleep(0.2)
-
-                # Stop trigger (once)
-                self.captureLog.emit("Stopping trigger…")
-                interface.console_module.stop_trigger()
-                self._trigger_state = "OFF"
-                self.triggerStateChanged.emit()
-                time.sleep(1)
-
-                # Disable cameras per active side
-                self.captureLog.emit("Disabling cameras…")
-                for side, mask, _ in active_sides:
-                    res = interface.run_on_sensors("disable_camera", mask, target=side)
-                    if not _ok_from_result(res, side):
-                        self.captureLog.emit(
-                            f"Failed to disable camera on {side} (mask 0x{mask:02X})."
-                        )
-                # Stop sensor streaming
-                self.captureLog.emit("Stop Sensors Streaming...")
-                for side, mask, sensor in active_sides:
-                    if sensor:
-                        try:
-                            sensor.uart.histo.stop_streaming()
-                        except Exception as e:
-                            self.captureLog.emit(f"stop_streaming[{side}] error: {e}")
-
-                # Stop sensor streaming & writer threads
-                for side, stop_evt in writer_stops.items():
-                    stop_evt.set()
-                for side, t in writer_threads.items():
-                    t.join(timeout=5.0)
-                for side, pipeline in processing_pipelines.items():
-                    pipeline.stop()
-
-                ok = not self._capture_stop.is_set()
-                if ok:
-                    self.captureLog.emit("Capture session complete.")
-                    # Save notes file for the whole scan
-                    try:
-                        notes_filename = f"scan_{subject_id}_{ts}_notes.txt"
-                        notes_path = os.path.join(data_dir, notes_filename)
-                        with open(notes_path, "w", encoding="utf-8") as nf:
-                            nf.write(self._scan_notes.strip() + "\n")
-                        logger.info(f"Saved scan notes to {notes_path}")
-                    except Exception as e:
-                        logger.error(f"Failed to save scan notes: {e}")
-                    # Post-scan quick stats
-                    try:
-                        self._log_scan_image_stats(left_path, right_path)
-                    except Exception as e:
-                        logger.error(f"Failed to compute scan image stats: {e}")
-                else:
-                    err = "Capture canceled"
-
-            except Exception as e:
-                err = str(e)
-                self.captureLog.emit(f"Capture error: {err}")
-                ok = False
-            finally:
-                self._capture_running = False
-                self._safety_cancel_scheduled = False
-                self._capture_thread = None
-                self.captureFinished.emit(ok, err, left_path, right_path)
-                self._stop_runlog()
-
-        # launch worker
-        self._capture_thread = threading.Thread(target=_worker, daemon=True)
-        self._capture_thread.start()
-        return True
+        started = self._interface.start_scan(
+            req,
+            extra_cols_fn=_extra_cols,
+            on_log_fn=lambda msg: self.captureLog.emit(msg),
+            on_progress_fn=lambda pct: self.captureProgress.emit(int(pct)),
+            on_trigger_state_fn=_on_trigger_state,
+            on_sample_fn=_on_sample,
+            on_corrected_fn=_on_corrected,
+            on_error_fn=lambda e: self.captureLog.emit(f"Capture error: {e}"),
+            on_side_stream_fn=lambda side, filepath: self.captureLog.emit(
+                f"[{side.upper()}] Streaming to: {os.path.basename(filepath)}"
+            ),
+            on_complete_fn=_on_complete,
+        )
+        if not started:
+            self._capture_running = False
+            self._stop_runlog()
+            self.captureLog.emit("Capture already running.")
+        return bool(started)
 
     def _log_scan_image_stats(self, left_csv: str, right_csv: str) -> None:
         left_csv = (left_csv or "").strip()
